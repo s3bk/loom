@@ -1,0 +1,12 @@
+:code <keyword name>
+    
+    marks a sequence of words as keyword entry
+
+:code #fig_wave    
+
+    References a target with the appropriate textutal representation
+    (Eg. 'Figure 13a')
+
+:code :command_name
+    
+    Issues a command of name 'command_name'

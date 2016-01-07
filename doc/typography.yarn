@@ -1,0 +1,80 @@
+:chapter Typography
+    
+    When inspecting a complex, yet great work of typography one will find     
+    different elements on a page and connections between them.
+    
+    Each type of element is represented by a .fiber and woven together with the 
+    .woof.
+    
+    During page formatting there is a list of layout fibers where each of them
+    contains pairs of LayoutBlockBegin and LayoutBlockEnd.
+    The items of one fiber is are processed sequentially. The items of different
+    fibers may be interleaved.
+    
+    :section Finding the optimal solution
+    
+        :subsection Preperation
+            
+            
+    In order to find the optimal solution for a given yarn:
+     1. Convert each word into a .WordNode
+     2. Convert marginnotes, footnotes, figures into 
+    
+    A LayoutBlockBegin changes the aviable Text area and has an target item 
+    associated. The following LayoutBlockEnd undoes the changes and calculates
+    a penalty for placing the item in the space that is aviable between the two
+    items.
+    
+    Generally the LayoutBlockEnd and
+      - Create a 'LineBreak' node for each line break
+      - create layoutChangeBegin and layoutChange
+    
+    
+    Make all score calculations mathematical and provide 1. and 2. derivatives 
+    for all parameters. 
+
+    :section Building a model of the Document
+        
+        The .parser converts an input file into a series of lines, each 
+        containing a list of items (words, commands, etc.).
+        
+        The document is internally repesendet by a graph of elements.
+        This graph is constructed by utilising a cursor that is responsible of
+        modifiying the graph in a threadsave manner. It also associates a range
+        in the graph with an input range from the parser.
+        This allows to update parts of the graph when the input changes, without
+        discarding most of the already completet layout computations.
+        
+    :section The Document Graph
+        
+        The Document Graph is independent of the layout?
+        
+    :section The Layout Graph
+        
+        The Layout Graph contains starting points that contain:
+          - a list of the first node in each <Fiber>
+        
+        The final nodes of the Layout Graph represent each a possible of the
+        document.
+        
+        Branches in the <Layout Graph> represent different possible layouts.
+        
+        Nodes in the Graph:
+          - link to the best previous Node
+          - store the accumulated score
+        
+        Possible Nodes:
+            Line:
+              - contains slice of Document Graph)
+              - type of break (adjacent, block interrupt, column break,
+                page break)
+            
+            Block:
+              - link to block element in the document graph
+
+        Main        Aside
+         |            |
+       block 1        |
+         |            |
+       block 2 ~~~ Comment 1
+       

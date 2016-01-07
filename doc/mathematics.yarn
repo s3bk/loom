@@ -1,0 +1,26 @@
+:chapter
+    Mathematics
+    
+    :section
+        Qualifying line wrappings
+        
+        :subsection
+            Tension and compression
+            
+            The white space between words is fexible and can be used to fit a 
+            line into the avaible space.
+            
+            Minimum space:
+                s_min = 1/3~em ?
+            Optimal space:
+                s_opt = 1/2~em
+            Actual space:
+                s
+            
+            compression ratio: r = s / s_opt
+            q_space = exp(r) + exp(1/r) - 2 exp(1)
+            
+    :section
+        Computation
+        
+        
