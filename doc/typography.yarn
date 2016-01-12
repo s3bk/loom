@@ -45,9 +45,18 @@
         This allows to update parts of the graph when the input changes, without
         discarding most of the already completet layout computations.
         
+        
+        How to link different yarns together?
+          - use #tags -> undirected link
+          - define an #id at one place and reference it from other places @ref
+            -> directed link
+            
     :section The Document Graph
         
         The Document Graph is independent of the layout?
+        
+        Nodes in the Graph:
+          - Word
         
     :section The Layout Graph
         
@@ -72,9 +81,9 @@
             Block:
               - link to block element in the document graph
 
-        Main        Aside
-         |            |
-       block 1        |
-         |            |
-       block 2 ~~~ Comment 1
+        Main        Aside     Translation
+         |            |            |
+       block 1        |          block 1
+         |            |            |
+       block 2 ~~~ Comment 1 ~~~ block 2
        

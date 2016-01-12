@@ -5,5 +5,7 @@ authors = ["Sebastian Köln <sebk@rynx.org>"]
 
 [dependencies]
 unicode_categories = "0.1.0"
-nom = "1.0.1"
+nom = "1.1.0"
+daggy = "0.3.0"
+radix_trie = "0.0.8"
 # power-assert = "0.3.5"

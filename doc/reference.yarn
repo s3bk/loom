@@ -1,4 +1,5 @@
 :term Yarn
+
     :brief
         A yarn is a ordered sequence of Entities occuring in the .Document
     
@@ -19,11 +20,13 @@
     them in a seperate file (one .yarn per file).
 
 :term Document
+
     :brief
         The Document is the result of weaving all .Yarns and the .Woof 
         together
 
 :term Woof
+
     :brief
         The Woof holds all .Yarns together and gives the .Document a meaning
 
@@ -55,3 +58,8 @@
     and later add a .Metalayout that produces a printable script. Another 
     person could -- at the same time -- write a .Metalayout to use view the
     content on a mobile device.
+
+:term Document Dictionary
+    
+    A map containing all used words in the document. This is used for 
+    hyphenation.
