@@ -1,5 +1,4 @@
-use unicode_categories::UnicodeCategories;
-use nom::{space, newline, IResult, is_alphanumeric, alphanumeric, multispace};
+use nom::{space, newline, IResult, Consumer, ConsumerState, Move, Input};
 use std::str;
     
 macro_rules! test_parser {
@@ -39,7 +38,6 @@ fn test_empty_lines() {
     test_parser!(empty_lines, b"    \n", b"", Line::Empty(1));
 }
 
-use std::iter::IntoIterator;
 named!(indent_level <&[u8], usize>,
     map!(
         many0!(
@@ -61,8 +59,8 @@ fn test_indent_level() {
     test_parser!(indent_level, b"\ttest", b"test", 1);
 }
 
-#[derive(Debug, PartialEq)]
-enum Item<'a> {
+#[derive(Debug, PartialEq, Clone)]
+pub enum Item<'a> {
     Word(&'a str),
     Reference(&'a str),
     Command(&'a str)
@@ -103,14 +101,14 @@ named!(item <&[u8], Item>,
     alt!( reference | command | word )
 );
 
-#[derive(Debug, PartialEq)]
-struct InputLine<'a> {
+#[derive(Debug, PartialEq, Clone)]
+pub struct InputLine<'a> {
     indent_level: usize,
     items: Vec<Item<'a>>
 }
 
-#[derive(Debug, PartialEq)]
-enum Line<'a> {
+#[derive(Debug, PartialEq, Clone)]
+pub enum Line<'a> {
     Empty(usize),
     Input(InputLine<'a>)
 }
@@ -143,13 +141,14 @@ fn test_line() {
     }));
 }
 
-named!(yarn <&[u8], Vec<Line> >,
-    many0!(
-        alt!(
-            line |
-            empty_lines
-        )
+named!(yarn_line <&[u8], Line>,
+    alt!(
+        line |
+        empty_lines
     )
+);
+named!(yarn <&[u8], Vec<Line> >,
+    many0!(yarn_line)
 );
 
 #[test]
@@ -178,4 +177,73 @@ fn test_yarn() {
             Item::Reference("bär")
         ]}),
     ]);
+}
+
+#[derive(Debug)]
+pub struct LineConsumer<'a> {
+    state: ConsumerState<Line<'a>, (), Move>
+}
+
+impl<'a> LineConsumer<'a> {
+    pub fn new() -> LineConsumer<'a> {
+        LineConsumer{ state: ConsumerState::Continue(Move::Consume(0)) }
+    }
+}
+impl<'a> Consumer<&'a [u8], Line<'a>, (), Move> for LineConsumer<'a> {
+    fn handle(&mut self, input: Input<&'a [u8]>)
+        -> &ConsumerState<Line<'a>,(),Move> {
+        match input {
+            Input::Empty | Input::Eof(None) => &self.state,
+            Input::Element(sl)              => {
+                match yarn_line(sl) {
+                    IResult::Error(_) => {
+                        self.state = ConsumerState::Error(())
+                    },
+                    IResult::Incomplete(_) => {
+                        self.state = ConsumerState::Continue(Move::Consume(0))
+                    },
+                    IResult::Done(i,o) => {
+                        self.state = 
+                            ConsumerState::Done(Move::Consume(i.len()),o)
+                    }
+                };
+                &self.state
+            }
+            Input::Eof(Some(sl))            => {
+                match yarn_line(sl) {
+                    IResult::Error(_) => {
+                        self.state = ConsumerState::Error(())
+                    },
+                    IResult::Incomplete(_) => {
+                        // we cannot return incomplete on Eof
+                        self.state = ConsumerState::Error(())
+                    },
+                    IResult::Done(i,o) => {
+                        self.state = 
+                            ConsumerState::Done(Move::Consume(i.len()), o)
+                    }
+                };
+                &self.state
+            }
+        }
+
+    }
+
+    fn state(&self) -> &ConsumerState<Line<'a>, (), Move> {
+        &self.state
+    }
+}
+
+#[test]
+fn test_parser() {
+    use nom::{FileProducer, Producer};
+    
+    let mut p = FileProducer::new("doc/reference.yarn", 1024).unwrap();
+    let mut c = LineConsumer::new();
+    {
+    println!("{:?}", p.apply(&mut c));
+    }
+    {
+    println!("{:?}", p.apply(&mut c));
+    }
 }
