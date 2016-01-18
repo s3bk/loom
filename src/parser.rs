@@ -3,10 +3,10 @@ use std::str;
     
 macro_rules! test_parser {
     (
-        $name:ident, $testcase:expr, $remaining:expr, $result:expr
+        $fun:ident, $testcase:expr, $remaining:expr, $result:expr
     ) => {
         assert_eq!(
-            $name($testcase),
+            $fun($testcase),
             IResult::Done($remaining as &[u8], $result)
         )
     }
@@ -37,15 +37,12 @@ fn test_empty_lines() {
     test_parser!(empty_lines, b"  \n\n", b"", Line::Empty(2));
     test_parser!(empty_lines, b"    \n", b"", Line::Empty(1));
 }
-
-named!(indent_level <&[u8], usize>,
+named!(indent_by_space, tag!(b"    "));
+named!(indent_by_tab, tag!(b"\t"));
+named!(indent_any, alt!(indent_by_space | indent_by_tab));
+named!(p_indent <&[u8], usize>,
     map!(
-        many0!(
-            alt!(
-                tag!(b"    ") |
-                tag!(b"\t")
-            )
-        ),
+        many0!(indent_any),
         |v: Vec<&[u8]>| {
             v.len()
         }
@@ -53,10 +50,10 @@ named!(indent_level <&[u8], usize>,
 );
 #[test]
 fn test_indent_level() {
-    test_parser!(indent_level, b"test", b"test", 0);
-    test_parser!(indent_level, b"  - test", b"  - test", 0);
-    test_parser!(indent_level, b"    test", b"test", 1);
-    test_parser!(indent_level, b"\ttest", b"test", 1);
+    test_parser!(p_indent, b"test", b"test", 0);
+    test_parser!(p_indent, b"  - test", b"  - test", 0);
+    test_parser!(p_indent, b"    test", b"test", 1);
+    test_parser!(p_indent, b"\ttest", b"test", 1);
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -114,7 +111,7 @@ pub enum Line<'a> {
 }
 named!(line <&[u8], Line>,
     chain!(
-        indent: indent_level ~
+        indent: p_indent ~
         items: many1!(item) ~
         newline,
         || {Line::Input(InputLine{ indent_level: indent, items: items })}
@@ -147,9 +144,56 @@ named!(yarn_line <&[u8], Line>,
         empty_lines
     )
 );
+
 named!(yarn <&[u8], Vec<Line> >,
     many0!(yarn_line)
 );
+fn multiline_fixed_indent(input: &[u8], expected_indent: usize) -> IResult<&[u8], Vec<Item> > {
+    let mut out: Vec<Item> = vec![];
+    map!(input, many1!(delimited!(
+        count!(indent_any, expected_indent),
+        many1!(chain!(i: item, || { out.push(i) })),
+        newline
+    )), |lines| { out })
+}
+
+
+#[test]
+fn test_indent_count() {
+    named!(_foo <&[u8], Vec<Item> >, apply!(multiline_fixed_indent, 2));
+    test_parser!(_foo, b"        foo\n", b"", vec![Item::Word("foo")]);
+}
+
+enum Body<'a> {
+    Empty(usize),
+    Leaf(Vec<Item<'a>>),
+    Block(Block<'a>)
+}
+
+struct Block<'a> {
+    name: &'a str,
+    header: Vec<Item<'a>>,
+    body: Vec<Body<'a>>
+}
+
+fn block(input: &[u8], indent_level: usize) -> IResult<&[u8], Block, u32> {
+    chain!(input,
+        tag!(":")
+      ~ name:   map_res!(take_until_either_bytes!(b" \t\n"), str::from_utf8)
+      ~         space?
+      ~ header: apply!(multiline_fixed_indent, indent_level)
+      ~ body:   many0!(alt!(
+                    map!(many1!(new_line),
+                         |r: Vec<()>| Body::Empty(r.len()))
+                  | map!(apply!(multiline_fixed_indent, indent_level + 1),
+                         |v| Body::Leaf(v))
+                  | map!(apply!(block, indent_level + 1),
+                         |b| Body::Block(b))
+                )),
+        || { Block{ name: name, header: header, body: body } }
+    )
+}
+
 
 #[test]
 fn test_yarn() {
@@ -240,10 +284,7 @@ fn test_parser() {
     
     let mut p = FileProducer::new("doc/reference.yarn", 1024).unwrap();
     let mut c = LineConsumer::new();
-    {
+    
     println!("{:?}", p.apply(&mut c));
-    }
-    {
-    println!("{:?}", p.apply(&mut c));
-    }
+    // println!("{:?}", p.apply(&mut c));
 }
