@@ -1,65 +1,70 @@
-:term Yarn
+:chapter Reference
 
-    :brief
-        A yarn is a ordered sequence of Entities occuring in the .Document
-    
-    In most cases the main .yarn is build from the textbody which is provieded
-    by the user. An equally important .yarn could be a translation which is 
-    expected to be positioned aside of the first .yarn.
-    
-    The following list shows an non exhaustive list of other .yarns used:
-      - Marginnotes
-      - Comments
-      - Formulas
-      - Figures
-      - Footnotes
-    
-    A .yarn may be either parsed from a file or generated while parsing other 
-    files. For example: You can choose between including your marginnotes in 
-    your main file (in this case that file includes both .yarns) and storing 
-    them in a seperate file (one .yarn per file).
+    :term Yarn
 
-:term Document
+        :brief
+            A yarn is a ordered sequence of Entities occuring in the .Document
+        
+        In most cases the main .yarn is build from the textbody which is provided
+        by the user .
+        An equally important .yarn could be a translation which is 
+        expected to be positioned aside of the first .yarn .
+        
+        The following list shows an non exhaustive list of other .yarns used :
+        
+          - Marginnotes
+          - Comments
+          - Formulas
+          - Figures
+          - Footnotes
+        
+        A .yarn may be either parsed from a file or generated while parsing other 
+        files . For example : You can choose between including your marginnotes in 
+        your main file ( in this case that file includes both .yarns ) and storing
+        them in a seperate file ( one .yarn per file ) .
 
-    :brief
-        The Document is the result of weaving all .Yarns and the .Woof 
-        together
+    :term Document
 
-:term Woof
+        :brief
+            The Document is the result of weaving all .Yarns and the .Woof 
+            together
 
-    :brief
-        The Woof holds all .Yarns together and gives the .Document a meaning
+    :term Woof
 
-:term Metafile
-    
-    The Metafile describes the building blocks that are aviable in the 
-    .document. Imagine the metafile as the specification and documentation of 
-    your Loom.
-    
-    It contains the .commands including translation and description.
-    
-    The Metafile is also part of a .document, even it is never modified by 
-    the user.
-    It describes their relations, dependencies and meanings.
-    It does not describe their representation.
-    
-    This makes it possible to represent a file -- metafile combination
+        :brief
+            The Woof holds all .Yarns together and gives the .Document a meaning
 
-:term Metalayout
-    
-    This component provides the translation between elements described in the 
-    .metafile and the construction of elements that are feed into the layout 
-    engine.
-    
-    Creating a .Metalayout for an existing .Metafile makes it possible to 
-    publish an existing .Document in another media.
-    
-    You could, for example start with a .Metalayout for a beamer presentation 
-    and later add a .Metalayout that produces a printable script. Another 
-    person could -- at the same time -- write a .Metalayout to use view the
-    content on a mobile device.
+    :term Metafile
+        
+        The Metafile describes the building blocks that are aviable in the 
+        .document .
+        Imagine the metafile as the specification and documentation of 
+        your Loom .
+        
+        It contains the .commands including translation and description .
+        
+        The Metafile is also part of a .document , even it is never modified by 
+        the user .
+        It describes their relations , dependencies and meanings .
+        It does not describe their representation .
+        
+        This makes it possible to represent a file -- metafile combination
 
-:term Document Dictionary
-    
-    A map containing all used words in the document. This is used for 
-    hyphenation.
+    :term Metalayout
+        
+        This component provides the translation between elements described in the 
+        .metafile and the construction of elements that are feed into the layout 
+        engine .
+        
+        Creating a .Metalayout for an existing .Metafile makes it possible to 
+        publish an existing .Document in another media .
+        
+        You could , for example start with a .Metalayout for a beamer presentation 
+        and later add a .Metalayout that produces a printable script . Another 
+        person could -- at the same time -- write a .Metalayout to use view the
+        content on a mobile device .
+
+    :term Document Dictionary
+        
+        A map containing all used words in the document .
+        This is used for hyphenation .
