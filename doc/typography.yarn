@@ -54,9 +54,16 @@
     :section The Document Graph
         
         The Document Graph is independent of the layout?
-        
+        Map Document Nodes to input slices.
         Nodes in the Graph:
-          - Word
+            - Block
+              Name and arguments in the first line.
+              All following lines were the indention is increased by one are 
+              child nodes.
+            - Leaf
+              a list of Words and inline Commands
+              (in most cases they will be paragraphs)
+        
         
     :section The Layout Graph
         
