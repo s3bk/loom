@@ -1,0 +1,42 @@
+Layout 1
+
+|<---------------------------------- W --------------------------------------->|
+|                                                                              |
+|<------- a ------>|                 Abstract            |<-------- a -------->|
+|                  |          abstract is centered       |                     |
+|                  |        horizontally on the page     |                     |
+|                                                                              |
+|<--- c --->| Text ...                                     |<--- s + n + m --->|
+|           |<-------------------- t --------------------->|                   |
+|           |                                              |<s>| Comment.. |<m>|
+|           |                                              |   |<-- n ---->|   |
+|< b >| Annotation                       may extend up to the right margin |<m>|
+|           | The text continues with a new paragraph ..   |                   |
+|           | At least space for five words                |                   |
+
+Layout 2
+
+|<------------------------- W -------------------------->|
+|   |<---------------------- t --------------------->|   |
+|<m>| Text normally uses the full width sans margins |<m>|
+|   | Annotations are 
+|   |                                                |   |
+|   | Unless it is cut in by |<s>| Comment to comm-  |   |
+|   | a comment.             |   | ent on the text   |   |
+|   |<-------- t' ---------->|   |<------ n -------->|   |
+t' >= t/2
+
+Layout 3
+
+|<-------------------- W --------------------->|
+|   |<---------------- t ----------------->|   |
+|<m>| Text normally uses the full width    |<m>|
+|   | sans margins                         |   |
+|   |                                      |   |
+|   |<s>|A comment to comment on the foll- |   |
+|   |   |owing paragraph. slightly indented|   |
+|   | Unless it is interrupted by a comment|   |
+
+
+
+

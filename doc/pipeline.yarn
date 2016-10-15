@@ -1,0 +1,30 @@
+:chapter Loom's processing pipeline
+    
+    :brief
+        
+    
+    :section Parsing
+        The first step is parsing the file into a token tree .
+        
+        This stage is sequential and runs in one thread .
+    
+        :result
+            Token Tree
+    
+    :section Name resolving | linking
+        The second stage is to build the document tree .
+        This involves for each block:
+           - looking up the name
+           - If the name refers into a module, loading it .
+           - If it resolves to a macro, expanding it .
+        
+        state 1: unresolved call with attached data
+        state 2: resolved
+        
+        :result
+            Document tree
+            
+    :section Layout Graph
+        The block handlers are executed and combine the results from their 
+        children into one node . This results in the full layout graph .
+        
