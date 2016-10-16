@@ -10,10 +10,10 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use woot::{WString, WStringIter, IncrementalStamper, Key};
-use pipe::{pipe, PipeReader, PipeWriter};
 use document::{Node, NodeP};
 use layout::LayoutNode;
 use environment::{Environment, prepare_environment};
+use slog::Logger;
 
 pub use rmp_serialize::{Encoder, Decoder};
 
@@ -39,59 +39,74 @@ enum StreamItem {
 pub struct IoMachine {
     // we write everything to disk as well
     // uncompressed data to go into compressor
-    encoder:    lz4::Encoder<PipeWriter>,
-    file:       Option<File>,
+    encoder:    lz4::Encoder<DataOut>,
     nodes:      HashMap<Stamp, NodeP>,
-    changes:    PipeReader,
-    stamper:    IncrementalStamper<u32, u32>,
-    typelist:   Vec<NodeType>
+    stamper:    RefCell<IncrementalStamper<u32, u32>>,
+    typelist:   Vec<NodeType>,
+    logger:     Logger,
+    active:     Option<(NodeP, Environment<'static>)>
 }
 pub struct IoCreate<'a> {
     stamp:  Stamp,
-    io:     RefCell<IoMachine>,
-    marker: PhantomData<&'a IoRef<'a>>
+    io_ref: IoRef<'a>
 }
 impl<'a> IoCreate<'a> {
     pub fn submit(mut self, data: &[u8]) {
         // This is not Send -> submit can't be called twice at the same time
-        self.io.borrow_mut().add_data(self.stamp, data);
+        self.io_ref.io.add_data(self.stamp, data);
     }
     pub fn stamp(&self) -> Stamp {
         self.stamp
     }
 }
 
+#[derive(Clone)]
 pub struct IoRef<'a> {
-    io:     RefCell<IoMachine>,
-    marker: PhantomData<&'a IoRef<'a>>
+    io:     &'a IoMachine
 }
 impl<'a> IoRef<'a> {
     pub fn create(&self) -> IoCreate {
         IoCreate {
-            stamp:  self.io.borrow_mut().stamp(),
-            io:     self.io.clone(),
-            marker: PhantomData
+            stamp:  self.io.stamp(),
+            io_ref: self.clone()
         }
     }
-    pub fn new(io: IoMachine) -> IoRef<'static> {
+    pub fn new(io: &IoMachine) -> IoRef {
         IoRef{
-            io: RefCell::new(io)
-        }
-    }
-    fn clone(&self) -> IoRef {
-        IoRef{
-            io:     self.io.clone(),
-            marker: PhantomData(self)
+            io: io
         }
     }
 }
 
+struct DataOut {
+    logger: Logger,
+    file:   Option<File>
+}
+impl io::Write for DataOut {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        trace!(self.logger, "write: {:?}", buf);
+        
+        if let Some(ref mut f) = self.file {
+            f.write(buf)
+        } else {
+            Ok(buf.len())
+        }
+    }
+    
+    fn flush(&mut self) -> io::Result<()> {
+        if let Some(ref mut f) = self.file {
+            f.flush()
+        } else {
+            Ok(())
+        }
+    }
+}
 
 impl IoMachine {
-    fn add_data(&mut self, stamp: Stamp, data: &[u8]) {
+    fn add_data(&self, stamp: Stamp, data: &[u8]) {
     }
-    pub fn stamp(&self) -> Stamp {
-        self.stamper.stamp()
+    fn stamp(&self) -> Stamp {
+        self.stamper.borrow_mut().stamp()
     }
     
     pub fn flush(&mut self) {
@@ -100,27 +115,30 @@ impl IoMachine {
     
     /// storage: Some(path) to store the document
     ///          None to throw it away.
-    pub fn new(storage: Option<&Path>) -> IoMachine {
+    pub fn new(logger: Logger, storage: Option<&Path>) -> IoMachine {
         use lz4::liblz4::{BlockMode, BlockSize};
-        use environment::prepare_environment;
         
-        let (pipe_out, pipe_in) = pipe();
         let file = storage.map(|p| File::open(p).unwrap());
+        let mut data_out = DataOut {
+            logger: logger.clone(),
+            file:   file
+        };
         
+        trace!(logger, "creating encoder");
         let encoder = lz4::EncoderBuilder::new()
         .block_mode(BlockMode::Linked)
         .block_size(BlockSize::Max1MB)
         .level(16)
-        .build(pipe_in)
+        .build(data_out)
         .expect("failed to create lz4 encoder");
         
         IoMachine {
             encoder:    encoder,
-            file:       file,
-            changes:    pipe_out,
             nodes:      HashMap::new(),
-            stamper:    IncrementalStamper::init_random(),
-            typelist:   vec![]
+            stamper:    RefCell::new(IncrementalStamper::init_random()),
+            typelist:   vec![],
+            logger:     logger,
+            active:     None
         }
     }
     
@@ -129,45 +147,51 @@ impl IoMachine {
         let mut queue = vec![node];
         
         while let Some(n) = queue.pop() {
+            debug!(self.logger, "insert_node: {:?}", n);
             // add childs to quue
             n.childs(&mut queue);
             
             // make up an ID
-            let id = self.stamper.stamp();
+            let id = self.stamper.get_mut().stamp();
             
             
             // push into queue
             //self.queue_out.push(Shared{ id: id, node: n });
             
             // store object (consumes it)
-            self.nodes.insert(id, node);
+            self.nodes.insert(id, n);
         }
     }
-}
 
+    pub fn load_yarn(&mut self, yarn: &Path) {
+        use blocks::RootNode;
+        use std::io::Read;
 
-pub fn load_yarn(mut io: IoRef, yarn: &Path) {
-    use blocks::RootNode;
-    use std::io::Read;
+        debug!(self.logger, "load yarn: {:?}", yarn);
+        
+        let mut env = Environment::new(self.logger.new(o!("env" => "root")));
+        prepare_environment(&mut env);
 
-    let mut env = Environment::new();
-    prepare_environment(&mut env);
-
-    let mut data = String::new();
-    File::open(yarn).expect("could not open file")
-    .read_to_string(&mut data).expect("could not read from file");
+        let mut data = String::new();
+        File::open(yarn).expect("could not open file")
+        .read_to_string(&mut data).expect("could not read from file");
+        
+        // the lifetime of io.clone() ensures no borrow exists when the function
+        // returns from this call
+        let root = RootNode::parse(IoRef::new(self), &env, &data);
+        debug!(self.logger, "parsing complete");
+        // thus this call can not fail
+        self.insert_node(root.clone());
+        
+        self.active = Some((root, env));
+    }
     
-    // the lifetime of io.clone() ensures no borrow exists when the function
-    // returns from this call
-    let root = RootNode::parse(io.clone(), &env, &data);
-    
-    // thus this call can not fail
-    io.borrow_mut().insert_node(root);
-}
-
-#[test]
-fn test_io() {
-    let mut io = IoRef::new(IoMachine::new(None));
-    
-
+    pub fn layout(&self) -> Option<LayoutNode> {
+        match self.active {
+            Some((ref root, ref env)) =>
+                Some(root.layout(env)),
+            None =>
+                None
+        }
+    }
 }

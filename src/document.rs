@@ -1,18 +1,11 @@
-use std::sync::Arc;
-use std::fs::File;
 use std::iter::Iterator;
-use std::collections::{LinkedList, HashMap};
-use std::path::Path;
 use std::ops::Deref;
-use std::borrow::{Borrow, BorrowMut};
 use std::rc::Rc;
 use std::fmt::Debug;
-use std::cell::{RefCell, RefMut};
-use rustc_serialize::Encodable;
-use parser;
+use std::cell::RefCell;
 use layout::{LayoutNode};
 use environment::Environment;
-use io::{Encoder, Stamp, IoRef, IoCreate};
+use io::{Stamp, IoRef};
 use woot::{WString, WStringIter};
 
 /// The Document is a Directed Acyclic Graph.
@@ -40,7 +33,7 @@ pub trait Node: Debug {
     fn space(&self) -> (bool, bool) {
         (false, false)
     }
-    fn add_ref(&self, source: &Rc<Node>) {}
+    fn add_ref(&self, _: &Rc<Node>) {}
 }
 #[derive(Debug)]
 pub struct P<N: ?Sized + Node> {
@@ -61,19 +54,22 @@ impl<N: ?Sized> Node for P<N> where N: Node {
         self.rc.space()
     }
 }
-impl<N> From<N> for P<N> where N: Node {
-    fn from(n: N) -> P<N> {
+impl<N> P<N> where N: Node {
+    pub fn new(n: N) -> P<N> {
         P {
-            rc:         Rc::new(n),
+            rc: Rc::new(n),
             //references: LinkedList::new()
         }
     }
 }
-impl<N> From<P<N>> for P<Node> where N: Node {
+impl<N> From<P<N>> for P<Node> where N: Node + Sized + 'static {
     fn from(n: P<N>) -> P<Node> {
-        n.into()
+        P {
+            rc: n.rc as Rc<Node>
+        }
     }
 }
+
 impl<N> Deref for P<N> where N: Node {
     type Target = N;
     
@@ -138,7 +134,7 @@ impl Node for Placeholder {
         
         env.get_macro().map(|m| m.placeholder_layout(env, self))
         .unwrap_or_else(|| {
-            let mut b = LeafBuilder::new(env);
+            let b = LeafBuilder::new(env);
             match self {
                 &Placeholder::Body => b.word("$body"),
                 &Placeholder::Argument(n) => b.word(&format!("${}", n)),
@@ -190,10 +186,12 @@ impl<T> NodeList<T> where T: Node + Clone {
     }
     pub fn from<I>(io: IoRef, env: &Environment, iter: I) -> NodeList<T>
     where I: Iterator<Item=T> {
+        trace!(env, "NodeList::from {}", (stringify!(I)));
         let mut ws = WString::new();
         let buf: Vec<u8> = Vec::with_capacity(1000);
         
         for (n, item) in iter.enumerate() {
+            trace!(env, "item {}: {:?}", n, item);
             let job = io.create();
             let op = ws.ins(n, item, job.stamp());
             //job.submit(op);

@@ -1,10 +1,11 @@
 use std::sync::Arc;
-use std::iter;
+use std::iter::FromIterator;
 use std::ops::{AddAssign};
 use std::fmt::Debug;
 use typeset::{MeasuredWord};
 
 // to flex or not to flex?
+#[allow(unused_variables)]
 pub trait Flex : Debug {
     fn stretch(&self, line_width: f32) -> f32 { 0.0 }
     fn shrink(&self, line_width: f32) -> f32 { 0.0 }
@@ -39,6 +40,7 @@ pub struct FlexMeasure {
     width:      f32,
     height:     f32
 }
+#[allow(unused_variables)]
 impl Flex for FlexMeasure {
     fn stretch(&self, line_width: f32) -> f32 { self.stretch }
     fn shrink(&self, line_width: f32) -> f32 { self.shrink }
@@ -97,18 +99,86 @@ enum StreamItem {
     
     /// Somtimes there are different possiblites of representing something.
     /// A Branch solves this by splitting the stream in two parts.
-    /// The lengths of both paths are the arguments to Branch.
-    /// The third argument is the score for the second branch.
-    Branch(u32, u32, f32)
+    /// The default path is taken by skipping the specified amount of entries.
+    /// The other one by following the next items.
+    ///
+    /// normal items
+    /// BranchEntry(3)
+    ///   branched item 1
+    ///   branched item 2
+    /// BranchExit(1)
+    ///   normal item 1
+    /// both sides joined here
+    BranchEntry(usize),
+    
+    /// Each BranchEntry is followed by BranchExit. It specifies the number of
+    /// items to skip.
+    BranchExit(usize)
 }
 
+#[derive(Clone, Debug)]
+pub enum LayoutNode {
+    Leaf(TokenStream),
+    Nodes(Vec<LayoutNode>)
+}
+impl Into<LayoutNode> for (LayoutNode, LayoutNode) {
+    fn into(self) -> LayoutNode {
+        LayoutNode::Nodes(vec![self.0, self.1])
+    }
+}
+impl Into<LayoutNode> for TokenStream {
+    fn into(self) -> LayoutNode {
+        LayoutNode::Leaf(self)
+    }
+}
+impl FromIterator<LayoutNode> for LayoutNode {
+    fn from_iter<T>(iter: T) -> LayoutNode where T: IntoIterator<Item=LayoutNode>{
+        LayoutNode::Nodes(Vec::<LayoutNode>::from_iter(iter))
+    }
+}
+impl LayoutNode {
+    fn size(&self) -> usize {
+        match self {
+            &LayoutNode::Leaf(ref stream) => stream.len(),
+            &LayoutNode::Nodes(ref vec) => vec.iter().map(|n| n.size()).sum()
+        }
+    }
+}
 
+/// append the node to the 
+impl Into<TokenStream> for LayoutNode {
+    fn into(self) -> TokenStream {
+        let mut s = TokenStream {
+            s: Vec::with_capacity(self.size())
+        };
+        s.append_node(&self);
+        s
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct TokenStream {
     s: Vec<StreamItem>,
 }
 impl TokenStream {
+    fn append_node(&mut self, node: &LayoutNode) {
+        match node {
+            &LayoutNode::Leaf(ref stream) => {
+                self.extend(stream);
+            },
+            &LayoutNode::Nodes(ref vec) => {
+                for n in vec.iter() {
+                    self.append_node(n);
+                }
+            }
+        }
+    }
+
     pub fn new() -> TokenStream {
         TokenStream { s: vec![] }
+    }
+    pub fn len(&self) -> usize {
+        self.s.len()
     }
     
     fn add(&mut self, i: StreamItem) {
@@ -140,170 +210,264 @@ impl TokenStream {
         self
     }
     
-    pub fn branch(&mut self, a: TokenStream, b: TokenStream, penalty: f32) -> &mut TokenStream {
-        self.add(StreamItem::Branch(a.s.len() as u32, b.s.len() as u32, penalty));
-        self.s.extend_from_slice(&a.s);
-        self.s.extend_from_slice(&b.s);
+    pub fn branch(&mut self, a: &TokenStream, b: &TokenStream) -> &mut TokenStream {
+        self.add(StreamItem::BranchEntry(b.s.len() + 1));
+        self.extend(b);
+        self.add(StreamItem::BranchExit(a.s.len()));
+        self.extend(a);
         self
     }
+    
+    pub fn branch_many<I>(&mut self, default: TokenStream, others: I)
+    where I: Iterator<Item=TokenStream> {
+        let mut others: Vec<TokenStream> = others.collect();
+        
+        if others.len() == 0 {
+            self.extend(&default);
+            return;
+        }
+        
+        while others.len() > 1 {
+            for n in 0 .. others.len() / 2 {
+                let mut merged = TokenStream::new();
+                {
+                    let b = others.pop().unwrap();
+                    let ref a = others[n];
+                    merged.branch(a, &b);
+                }
+                others[n] = merged;
+            }
+        }
+        self.branch(&default, &others[0]);
+    }
 }
 
-#[derive(Copy, Clone, Debug)]
-enum Entry {
-    Empty,
-    LineBreak(usize, f32, f32),
-    Branch(usize, bool)
+#[derive(Copy, Clone, Debug, Default)]
+struct LineBreak {
+    prev:   usize,
+    path:   u64, // one bit for each branch taken (1) or not (0)
+    factor: f32,
+    score:  f32
 }
-
-fn maybe_update(node: &mut Entry, start: usize, start_score: f32, text_width: f32, m: FlexMeasure) -> bool {
-    if text_width < m.shrink || m.stretch <= m.width {
-        return false;
-    }
-    
-    let delta = text_width - m.width; // d > 0 => stretch, d < 0 => shrink
-    let factor = delta / (if delta >= 0. { m.stretch - m.width } else { m.width - m.shrink });
-    
-    let break_score = start_score - factor * factor;
-    match *node {
-        Entry::Empty => {
-            *node = Entry::LineBreak(start, factor, break_score);
-        },
-        Entry::LineBreak(_, _, other_score)
-        if break_score > other_score => {
-            *node = Entry::LineBreak(start, factor, break_score);
-        },
-        _ => {}
-    }
-    true
-}
+type Entry = Option<LineBreak>;
 
 pub struct ParagraphLayout {
     items:      Vec<StreamItem>,
-    pos:        usize,
     width:      f32,
-    nodes:      Vec<Entry>,
-}
-impl ParagraphLayout {
-    pub fn new(s: TokenStream, width: f32) -> ParagraphLayout {
-        let N = s.s.len();
-        ParagraphLayout {
-            items: s.s,
-            pos: 0,
-            width: width,
-            nodes: iter::repeat(Entry::Empty).take(N+1).collect()
-        }
-    }
 }
 pub struct Line {
     pub words:  Vec<(Arc<MeasuredWord>, f32)>,
     pub height: f32
 }
-impl Iterator for ParagraphLayout {
-    type Item = Vec<Line>;
+
+struct LineContext {
+    measure:    FlexMeasure,
+    path:       u64, // one bit for each branch on this line
+    begin:      usize, // begin of line or branch
+    pos:        usize, // calculation starts here
+    score:      f32, // score at pos
+    branches:   u8 // number of branches so far (<= 64)
+}
+
+impl ParagraphLayout {
+    pub fn new(s: TokenStream, width: f32) -> ParagraphLayout {
+        ParagraphLayout {
+            items: s.s,
+            width: width
+        }
+    }
     
-    fn next(&mut self) -> Option<Vec<Line>> {
-        let N = self.items.len();
-        self.nodes[self.pos] = Entry::LineBreak(0, 0.0, 0.0);
+    pub fn run(&mut self) -> Vec<Line> {
+        use std::iter::repeat;
         
-    // get top node
-        let mut next = self.pos;
-  'a:   for start in self.pos .. N {
-            let node = self.nodes[start];
+        let limit = self.items.len();
+        let mut nodes: Vec<Entry> = repeat(None).take(limit+1).collect();
+        nodes[0] = Some(LineBreak::default());
+        let mut last = 0;
+        
+  'a:   for start in 0 .. limit {  
+            let node = nodes[start];
             match node {
-                Entry::Empty => {},
-                Entry::LineBreak(prev, _, start_score) => {
-                    let mut measure = FlexMeasure::zero();
-                    
-                    for n in start .. N {
-                        let ref item = self.items[n];
-                        match item {
-                        //match self.items[n] {
-                            &StreamItem::Word(ref w) => {
-                                measure += w.measure(self.width);
-                            },
-                            &StreamItem::Space(ref s) => {
-                                measure += s.measure(self.width);
-                            },
-                            &StreamItem::BreakingSpace(ref s) => {
-                                // breaking case:
-                                // width is not added (yet)!
-                                maybe_update(&mut self.nodes[n+1], start, start_score, self.width, measure);
-                                
-                                // non-breaking case:
-                                // add width now.
-                                measure += s.measure(self.width);
-                            }
-                            &StreamItem::Linebreak => {
-                                if maybe_update(&mut self.nodes[n+1], start, start_score, self.width, measure) {
-                                    next = n + 1;
-                                }
-                                continue 'a;
-                            },
-                            _ => {}
+                Some(b) => {
+                    last = self.complete_line(
+                        &mut nodes,
+                        LineContext {
+                            measure:    FlexMeasure::zero(),
+                            path:       0,
+                            score:      b.score,
+                            begin:      start,
+                            pos:        start,
+                            branches:   0
                         }
-                        
-                        if measure.shrink > self.width {
-                            break; // too full
-                        }
-                    }
+                    );
                 },
-                Entry::Branch(prev, taken) => {}
+                None => {}
             }
         }
         
-        if next == self.pos {
-            return None;
-        }
-        
-        for (n, node) in self.nodes.iter().take(N).enumerate() {
+        for (n, node) in nodes.iter().take(limit).enumerate() {
             println!("{:4}  {:?}", n, node);
             println!("      {:?}", self.items[n]);
         }
-        println!("{:4}  {:?}", N, self.nodes[N]);
+        println!("{:4}  {:?}", limit, nodes[limit]);
         
-        let mut end = next;
+        if last == 0 {
+            return vec![];
+        }
+        
         let mut steps = vec![];
         
-        while end > self.pos {
-            println!("node {:3} {:?}", end, self.nodes[end]);
-            match self.nodes[end] {
-                Entry::LineBreak(start, factor , _) => {
-                    println!("Line from {} to {}", start, end-1);
-                    steps.push((start, end-1, factor));
-                    end = start;
+        while last > 0 {
+            //println!("node {:3} {:?}", end, self.nodes[end]);
+            match nodes[last] {
+                Some(b) => {
+                    //println!("Line from {} to {}", start, end-1);
+                    steps.push((b, last-1));
+                    last = b.prev;
                 },
-                _ => {
-                    unreachable!();
-                }
+                _ => unreachable!()
             }
         }
         
         let mut lines = Vec::with_capacity(steps.len());
-        for &(start, end, factor) in steps.iter().rev() {
+        for &(b, end) in steps.iter().rev() {
             let mut measure = FlexMeasure::zero();
             let mut words = vec![];
-            for node in self.items[start .. end].iter() {
+            let mut pos = b.prev;
+            let mut branches = 0;
+            while pos < end {
+                let node = self.items[pos].clone();
                 match node {
-                    &StreamItem::Word(ref w) => {
-                        words.push((w.clone(), measure.at(factor)));
-                        measure += w.measure(self.width)
+                    StreamItem::Word(w) => {
+                        let x = measure.at(b.factor);
+                        measure += w.measure(self.width);
+                        words.push((w, x));
                     },
-                    &StreamItem::Space(ref s) |
-                    &StreamItem::BreakingSpace(ref s) => {
+                    StreamItem::Space(s) |
+                    StreamItem::BreakingSpace(s) => {
                         measure += s.measure(self.width)
                     },
+                    StreamItem::BranchEntry(len) => {
+                        if b.path & (1<<branches) == 0 {
+                            // not taken
+                            pos += len;
+                        }
+                        branches += 1;
+                    },
+                    StreamItem::BranchExit(skip) => pos += skip,
                     _ => {}
                 }
+                pos += 1;
             }
             
             lines.push(Line {
                 height: measure.height,
                 words:  words
             });
-            self.pos = end;
         }
         
-        Some(lines)
+        lines
+    }
+    
+    
+    fn complete_line(&self, nodes: &mut Vec<Entry>, c: LineContext) -> usize {
+        let mut last = c.begin;
+        let mut c = c;
+        
+        while c.pos < self.items.len() {
+            let n = c.pos;
+            let ref item = self.items[n];
+            match item {
+            //match self.items[n] {
+                &StreamItem::Word(ref w) => {
+                    c.measure += w.measure(self.width);
+                },
+                &StreamItem::Space(ref s) => {
+                    c.measure += s.measure(self.width);
+                },
+                &StreamItem::BreakingSpace(ref s) => {
+                    // breaking case:
+                    // width is not added (yet)!
+                    if self.maybe_update(&c, &mut nodes[n+1]) {
+                        last = n+1;
+                    }
+                    
+                    // non-breaking case:
+                    // add width now.
+                    c.measure += s.measure(self.width);
+                }
+                &StreamItem::Linebreak => {
+                    if self.maybe_update(&c, &mut nodes[n+1]) {
+                        last = n+1;
+                    }
+                    break;
+                },
+                &StreamItem::BranchEntry(len) => {
+                    use std::cmp;
+                    // b 
+                    last = cmp::max(self.complete_line(
+                        nodes,
+                        LineContext {
+                            pos:        n + 1,
+                            path:       c.path | (1 << c.branches),
+                            branches:   c.branches + 1,
+                            ..          c
+                        }
+                    ), last);
+                    
+                    // a follows here
+                    c.pos += len;
+                    c.branches += 1;
+                },
+                &StreamItem::BranchExit(skip) => {
+                    c.pos += skip;
+                }
+            }
+            
+            if c.measure.shrink > self.width {
+                break; // too full
+            }
+            
+            c.pos += 1;
+        }
+        
+        last
+    }
+    
+    
+    fn maybe_update(&self, c: &LineContext, node: &mut Entry) -> bool {
+        let width = self.width;
+        let ref m = c.measure;
+        
+        if width < m.shrink || m.stretch <= m.width {
+            return false;
+        }
+    
+        let delta = width - m.width; // d > 0 => stretch, d < 0 => shrink
+        let factor = delta / (if delta >= 0. { m.stretch - m.width } else { m.width - m.shrink });
+        
+        let break_score = c.score - factor * factor;
+        match *node {
+            None => {
+                *node = Some(LineBreak {
+                    prev:   c.begin,
+                    path:   c.path,
+                    factor: factor,
+                    score:  break_score
+                } );
+            },
+            Some(other)
+            if break_score > other.score => {
+                *node = Some(LineBreak {
+                    prev:   c.begin,
+                    path:   c.path,
+                    factor: factor,
+                    score:  break_score
+                } );
+            },
+            _ => {}
+        }
+        true
     }
 }
 

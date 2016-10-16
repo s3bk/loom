@@ -12,7 +12,6 @@ extern crate rmp_serialize;
 extern crate rustc_serialize;
 extern crate lz4;
 extern crate woot;
-extern crate pipe;
 extern crate broadcast;
 extern crate mio;
 

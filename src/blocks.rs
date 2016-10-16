@@ -1,14 +1,11 @@
 use std::sync::Arc;
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
-use std::collections::{HashMap};
 use environment::Environment;
 use document::*;
 use layout::{TokenStream, Flex, LayoutNode};
 use typeset::Font;
 use parser;
-use std::iter::{once, empty};
-use std::borrow::{Borrow, BorrowMut};
 use io::IoRef;
 
 pub struct LeafBuilder<'a> {
@@ -107,7 +104,7 @@ impl Node for Param {
     fn childs(&self, out: &mut Vec<NodeP>) {
         out.push(self.value.clone().into())
     }
-    fn layout(&self, env: &Environment) -> LayoutNode {
+    fn layout(&self, _: &Environment) -> LayoutNode {
         unimplemented!()
     }
 }
@@ -115,7 +112,7 @@ impl Param {
     fn from(io: IoRef, env: &Environment, p: &parser::Parameter) -> Param {
         Param {
             name:   p.name.to_string(),
-            value:  P::from(Leaf::from(io, env, &p.value))
+            value:  P::new(Leaf::from(io, env, &p.value))
         }
     }
 }
@@ -131,13 +128,14 @@ impl Node for ErrorBlock {
 
 /// process the block and return the resulting layoutgraph
 fn process_block(env: &Environment, b: &parser::Block) -> P<Node> {
-    use std::iter::FromIterator;
-    
     // look up the name
+    debug!(env, "process_block name: {}", (b.name));
     match env.get_handler(b.name) {
         Some(handler) => {
             // prepare new environment
-            let mut env_inner = env.extend();
+            let mut env_inner = env.extend(o!(
+                "env" => "process_block"
+            ));
             
             // execute commands
             for cmd in b.commands.iter() {
@@ -150,10 +148,12 @@ fn process_block(env: &Environment, b: &parser::Block) -> P<Node> {
             }
             
             // run the handler
+            trace!(env, "call handler {:p}", handler);
             handler(&mut env_inner, b)
         },
         None => {
-            P::from(ErrorBlock(format!("unresolved '{}'", b.name))).into()
+            warn!(env, "handler {} not found", (b.name));
+            P::new(ErrorBlock(format!("unresolved '{}'", b.name))).into()
         }
     }
 }
@@ -162,6 +162,7 @@ fn process_body(io: IoRef, env: &Environment, body: &str, indent: usize) -> Node
     use parser::Body;
     use nom::IResult;
     
+    trace!(env, "process_body");
     match parser::block_body(body, indent) {
         IResult::Done(rem, childs) => {
             println!("remaining:\n{}", rem);
@@ -169,19 +170,20 @@ fn process_body(io: IoRef, env: &Environment, body: &str, indent: usize) -> Node
                 childs.iter()
                 .map(|node| match node {
                     &Body::Block(ref b) => process_block(env, b),
-                    &Body::Leaf(ref items) => P::from(Leaf::from(io.clone(), env, &items)).into(),
-                    &Body::List(ref items) => P::from(List::from(io.clone(), env, items)).into(),
-                    &Body::Placeholder(ref v) => P::from(process_placeholder(v)).into()
+                    &Body::Leaf(ref items) => P::new(Leaf::from(io.clone(), env, &items)).into(),
+                    &Body::List(ref items) => P::new(List::from(io.clone(), env, items)).into(),
+                    &Body::Placeholder(ref v) => P::new(process_placeholder(v)).into()
                 })
             );
-            P::from(nl).into()
+            P::new(nl).into()
         },
         IResult::Error(e) => {
-            println!("Error: {:?}", e);
-            P::from(ErrorBlock(format!("parser error {:?}", e))).into()
+            warn!(env, "Error: {:?}", e);
+            P::new(ErrorBlock(format!("parser error {:?}", e))).into()
         },
-        IResult::Incomplete(_) => {
-            P::from(ErrorBlock(format!("incomplete"))).into()
+        IResult::Incomplete(n) => {
+            warn!(env, "Incomplete: {:?} bytes missing", n);
+            P::new(ErrorBlock(format!("incomplete"))).into()
         }
     }
 }
@@ -233,10 +235,10 @@ fn item_node(i: &parser::Item) -> NodeP {
     
     match i {
         &Item::Word(ref s) |
-        &Item::Reference(ref s) => P::from(Word::new(s, Role::Word)).into(),
+        &Item::Reference(ref s) => P::new(Word::new(s, Role::Word)).into(),
         &Item::Symbol(ref s) |
-        &Item::Punctuation(ref s) => P::from(Word::new(s, Role::Punctuation)).into(),
-        &Item::Macro(ref v) => P::from(process_placeholder(v)).into()
+        &Item::Punctuation(ref s) => P::new(Word::new(s, Role::Punctuation)).into(),
+        &Item::Macro(ref v) => P::new(process_placeholder(v)).into()
     }
 }
 
@@ -246,9 +248,8 @@ pub struct Leaf {
 }
 impl Leaf {
     pub fn from(io: IoRef, env: &Environment, items: &[parser::Item]) -> Leaf {
-        use parser::Var;
         Leaf {
-            items: P::from(NodeList::from(io, env, items.iter().map(item_node)))
+            items: P::new(NodeList::from(io, env, items.iter().map(item_node)))
         }
     }
     pub fn get(&self, n: usize) -> Option<NodeP> {
@@ -264,7 +265,7 @@ impl Node for Leaf {
         let space = env.default_font().unwrap().space().flex(2.0);
         
         let mut it = self.items.iter().map(|i| (i, i.space())).peekable();
-        while let Some(&(next, next_space)) = it.peek() {
+        while let Some(&(_, next_space)) = it.peek() {
             let (prev, prev_space) = it.next().unwrap();
             
             nodes.push(prev.layout(env));
@@ -274,6 +275,9 @@ impl Node for Leaf {
                 s.space(space.clone());
                 nodes.push(s.into());
             }
+        }
+        if let Some((last, _)) = it.next() {
+            nodes.push(last.layout(env));
         }
         
         LayoutNode::Nodes(nodes)
@@ -288,7 +292,7 @@ impl List {
     pub fn from(io: IoRef, env: &Environment, items: &[Vec<parser::Item>]) -> List {
         List {
             items: NodeList::from(io.clone(), env, items.iter().map(|i|
-                P::from(Cached::new(Leaf::from(io.clone(), env, i)))
+                P::new(Cached::new(Leaf::from(io.clone(), env, i)))
             ))
         }
     }
@@ -316,7 +320,7 @@ pub struct RootNode {
 }
 impl RootNode {
     pub fn parse(io: IoRef, env: &Environment, s: &str) -> NodeP {
-        P::from(RootNode {
+        P::new(RootNode {
             child: process_body(io, env, s, 0)
         }).into()
     }
@@ -332,7 +336,9 @@ impl Node for RootNode {
 
 fn parameters(io: IoRef, env: &Environment, params: &[parser::Parameter])
 -> NodeList<P<Param>> {
-    NodeList::from(io.clone(), env, params.iter().map(|p| Param::from(io.clone(), env, p).into()))
+    NodeList::from(io.clone(), env, params.iter().map(|p|
+        P::new(Param::from(io.clone(), env, p)).into()
+    ))
 }
 
 #[derive(Debug)]
@@ -368,10 +374,10 @@ impl Node for MacroDefinition {
 
 impl MacroDefinition {
     fn from_block(io: IoRef, env: &Environment, b: &parser::Block) -> NodeP {
-        P::from(MacroDefinition {
+        P::new(MacroDefinition {
             name:   b.name.to_string(),
-            args:   P::from(Leaf::from(io.clone(), env, &b.argument)),
-            params: P::from(parameters(io.clone(), env, &b.parameters)),
+            args:   P::new(Leaf::from(io.clone(), env, &b.argument)),
+            params: P::new(parameters(io.clone(), env, &b.parameters)),
             childs: process_body(io.clone(), env, b.body, b.indent),
             references: RefCell::new(vec![])
         }).into()
@@ -410,9 +416,9 @@ impl Macro for MacroInstance {
 }
 impl MacroInstance {
     fn from_block(io: IoRef, env: &Environment, b: &parser::Block) -> NodeP {
-        let mut p = P::from(MacroInstance {
-            args:   P::from(Leaf::from(io.clone(), env, &b.argument)),
-            params: P::from(parameters(io.clone(), env, &b.parameters)),
+        let mut p = P::new(MacroInstance {
+            args:   P::new(Leaf::from(io.clone(), env, &b.argument)),
+            params: P::new(parameters(io.clone(), env, &b.parameters)),
             childs: process_body(io.clone(), env, b.body, b.indent),
             target: Ref::new(b.name.to_string())
         });
@@ -432,7 +438,7 @@ impl Node for MacroInstance {
     fn layout(&self, env: &Environment) -> LayoutNode {
         // the Environment will solve it.
         if let Some(ref target) = self.target.get() {
-            let mut env2 = env.extend();
+            let mut env2 = env.extend(o!("env" => "MacroInstance"));
             env2.set_macro(self);
             target.layout(&env2)
         } else {

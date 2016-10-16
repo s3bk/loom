@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::rc::Rc;
 use std::path::PathBuf;
 use typeset::{TypeEngine, Font, UnscaledFont};
 use layout::{TokenStream};
@@ -8,7 +7,7 @@ use document::{Macro, NodeP};
 use hyphenation::Hyphenator;
 use document;
 use parser;
-use io::IoMachine;
+use slog::{self, Logger};
 
 type Command = Fn(&mut Environment, &[String]) -> bool;
 type Handler = Fn(&mut Environment, &parser::Block) -> document::NodeP;
@@ -36,7 +35,8 @@ pub struct Environment<'a> {
     
     paths:          Vec<PathBuf>,
     active_macro:   Option<&'a Macro>,
-    targets:        HashMap<String, NodeP>
+    targets:        HashMap<String, NodeP>,
+    logger:         Logger
 }
 
 impl<'a> Environment<'a> {
@@ -190,8 +190,14 @@ impl<'a> Environment<'a> {
             }
         }
     }
+    pub fn logger(&self, values: Vec<slog::OwnedKeyValue>) -> Logger {
+        self.logger.new(values)
+    }
+    pub fn log(&self, record: &slog::Record) {
+        self.logger.log(record)
+    }
     
-    pub fn new() -> Environment<'static> {
+    pub fn new(logger: Logger) -> Environment<'static> {
         Environment {
             blocks:         HashMap::new(),
             tokens:         HashMap::new(),
@@ -204,15 +210,16 @@ impl<'a> Environment<'a> {
             commands:       HashMap::new(),
             targets:        HashMap::new(),
             paths:          vec![],
-            active_macro:   None
+            active_macro:   None,
+            logger:         logger
         }
     }
     
-    pub fn extend(&self) -> Environment {
+    pub fn extend(&self, values: Vec<slog::OwnedKeyValue>) -> Environment {
         Environment {
             default_font:   self.default_font.clone(),
             parent:         Some(self),
-            ..              Environment::new()
+            ..              Environment::new(self.logger(values))
         }
     }
 }   
@@ -220,9 +227,19 @@ impl<'a> Environment<'a> {
 pub fn prepare_environment(e: &mut Environment) {
     use layout::Flex;
     use typeset::RustTypeEngine;
-    use std::env;
+    use std::env::var_os;
+    use std::path::Path;
     
-    e.add_path(env::var("LOOM_DATA").expect("LOOM_DATA is not set").into());
+    let data_path: PathBuf = match var_os("LOOM_DATA") {
+        Some(v) => v.into(),
+        None => {
+            let p = Path::new(file!()).parent().unwrap().join("doc");
+            info!(e, "LOOM_DATA not set. Using {:?} instead.", p);
+            p
+        }
+    };
+    
+    e.add_path(data_path);
     
     e.add_font_engine(RustTypeEngine::new());
     e.set_default_font(RustTypeEngine::default().scale(20.0));

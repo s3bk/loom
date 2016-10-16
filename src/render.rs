@@ -5,15 +5,8 @@ use layout::LayoutNode;
 use image::{GrayImage, Luma};
 use blocks::RootNode;
 use std::path::Path;
-
-#[test]
-fn test_render() {
-    render_file(Path::new("doc/reference.yarn"), 600.)
-    .save("/tmp/layout.png").unwrap();
-}
-
     
-fn render(node: &LayoutNode, width: f32) -> GrayImage {
+pub fn render(node: &LayoutNode, width: f32) -> GrayImage {
     use std::time::SystemTime;
     
     fn m(label: &str, t0: SystemTime, t1: SystemTime) {
@@ -49,22 +42,4 @@ fn render(node: &LayoutNode, width: f32) -> GrayImage {
     image
 }
 
-pub fn render_data(data: &str, width: f32) -> GrayImage {
-    use environment::prepare_environment;
-    
-    let root = RootNode{};
-    let mut env = Environment::new();
-    prepare_environment(&mut env);
-    let root = RootNode::parse(data);
-    render(&root, width)
-}
-pub fn render_file(path: &Path, width: f32) -> GrayImage {
-    use std::fs::File;
-    use std::io::Read;
-    
-    let mut f = File::open(path).expect("no such file");
-    let mut s = String::new();
-    f.read_to_string(&mut s).unwrap();
-    render_data(&s, width)
-}
 

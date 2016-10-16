@@ -12,9 +12,10 @@ rmp = "*"
 rmp-serialize = "*"
 rustc-serialize = "*"
 lz4 = "*"
-pipe = "*"
 broadcast = "*"
 mio = "*"
+slog-term = "*"
+clap = {version="*", features=["yaml"]}
 
 [dependencies.image]
 default-features = false
@@ -32,9 +33,7 @@ git = "https://github.com/s3bk/woot.git"
 
 [dependencies.slog]
 version = "*"
-
-[dev_dependencies]
-clap = {version="*", features=["yaml"]}
+features = ["max_level_trace"]
 
 [[bin]]
 name = "render_image"
