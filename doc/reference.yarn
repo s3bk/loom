@@ -1,5 +1,6 @@
 :chapter Reference
-
+    /:hyphens en.map
+    
     :term Yarn
 
         :brief
@@ -7,9 +8,8 @@
         
         In most cases the main .yarn is build from the textbody which is provided
         by the user .
-        An equally important .yarn could be a translation which is 
+        Another equally important .yarn could be a translation which is
         expected to be positioned aside of the first .yarn .
-        
         The following list shows an non exhaustive list of other .yarns used :
         
           - Marginnotes
@@ -40,9 +40,7 @@
         .document .
         Imagine the metafile as the specification and documentation of 
         your Loom .
-        
         It contains the .commands including translation and description .
-        
         The Metafile is also part of a .document , even it is never modified by 
         the user .
         It describes their relations , dependencies and meanings .

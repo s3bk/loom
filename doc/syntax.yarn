@@ -10,3 +10,21 @@
 :code :command_name
     
     Issues a command of name 'command_name'
+
+:chapter Syntax
+
+    :intro Motivation
+        The purpose of .Loom is to transform the work of the authors into most
+        readable documents .
+        To archive this goal , knowledge about the distrubution and connections between
+        interdependent content is required .
+        To explain the previous sentence we should look at the following example :
+        :example
+            The second part of this sentence , which is announced in the first part ,
+            is off little use without the latter .
+        Read any part of the above sentence , and you will probably have no idea
+        what it is about . But when read as a whole it makes perfect sense .
+
+Block
+ - in TOC ? <- chapter, section, ....
+ 

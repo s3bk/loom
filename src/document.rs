@@ -1,197 +1,218 @@
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::fs::File;
-use std::iter::{Iterator, FromIterator, IntoIterator, DoubleEndedIterator};
-use std::collections::HashMap;
+use std::iter::Iterator;
+use std::collections::{LinkedList, HashMap};
+use std::path::Path;
 use std::ops::Deref;
-use daggy::{Dag};
+use std::borrow::{Borrow, BorrowMut};
+use std::rc::Rc;
+use std::fmt::Debug;
+use std::cell::{RefCell, RefMut};
+use rustc_serialize::Encodable;
 use parser;
+use layout::{LayoutNode};
+use environment::Environment;
+use io::{Encoder, Stamp, IoRef, IoCreate};
+use woot::{WString, WStringIter};
 
-#[derive(Debug, PartialEq, Eq)]
-struct DictEntry {
-    full: String
+/// The Document is a Directed Acyclic Graph.
+///
+/// One consequece is the possibility to use the same Node in more than
+/// one place. Also moving parts of the document is not more than changing
+/// a few references.
+
+/// Everything is an Object -> is a Pointer -> is an ID
+/// Since this is Rust, there will be a Trait requirement
+
+pub type NodeP = P<Node>;
+pub trait Node: Debug {    
+    /// 
+    fn childs(&self, &mut Vec<NodeP>) {}
+    
+    //fn encode(&self, e: &mut Encoder);
+    
+    // one or more child nodes were modified
+    fn modified(&self) {}
+    
+    /// compute layout graph
+    fn layout(&self, env: &Environment) -> LayoutNode;
+
+    fn space(&self) -> (bool, bool) {
+        (false, false)
+    }
+    fn add_ref(&self, source: &Rc<Node>) {}
 }
-impl DictEntry {
-    fn new(w: &str) -> DictEntry {
-        DictEntry {
-            full: w.to_owned()
+#[derive(Debug)]
+pub struct P<N: ?Sized + Node> {
+    rc: Rc<N>,
+    //references: LinkedList<P<N>>
+}
+impl<N: ?Sized> Node for P<N> where N: Node {
+    fn childs(&self, out: &mut Vec<NodeP>) {
+        self.rc.childs(out)
+    }
+    fn modified(&self) {
+        self.rc.modified()
+    }
+    fn layout(&self, env: &Environment) -> LayoutNode {
+        self.rc.layout(env)
+    }
+    fn space(&self) -> (bool, bool) {
+        self.rc.space()
+    }
+}
+impl<N> From<N> for P<N> where N: Node {
+    fn from(n: N) -> P<N> {
+        P {
+            rc:         Rc::new(n),
+            //references: LinkedList::new()
         }
     }
+}
+impl<N> From<P<N>> for P<Node> where N: Node {
+    fn from(n: P<N>) -> P<Node> {
+        n.into()
+    }
+}
+impl<N> Deref for P<N> where N: Node {
+    type Target = N;
+    
+    fn deref(&self) -> &N {
+        self.rc.deref()
+    }
+}
+impl<N> P<N> where N: Node {
+    pub fn get_mut(&mut self) -> Option<&mut N> {
+        Rc::get_mut(&mut self.rc)
+    }
+}
+impl<N: ?Sized> Clone for P<N> where N: Node {
+    fn clone(&self) -> P<N> {
+        P {
+            rc: self.rc.clone()
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Cached<N: Node> {
+    cache: RefCell<Option<LayoutNode>>,
+    pub inner: N
+}
+impl<N> Cached<N> where N: Node {
+    pub fn new(node: N) -> Cached<N> {
+        Cached {
+            cache:  RefCell::new(None),
+            inner:  node
+        }
+    }
+}
+impl<N> Node for Cached<N> where N: Node {
+    fn layout(&self, env: &Environment) -> LayoutNode {
+        let mut cache = self.cache.borrow_mut();
+        if let Some(ref l) = *cache {
+            return l.clone();
+        }
+        let l = self.inner.layout(env);
+        *cache = Some(l.clone());
+        l
+    }
+    fn childs(&self, out: &mut Vec<NodeP>) {
+        self.inner.childs(out)
+    }
+    fn modified(&self) {
+        *self.cache.borrow_mut() = None;
+    }
+}
+
+#[derive(Debug)]
+pub enum Placeholder {
+    Body,
+    Argument(usize),
+    Arguments,
+    Unknown(String)
+}
+impl Node for Placeholder {
+    fn layout(&self, env: &Environment) -> LayoutNode {
+        use blocks::LeafBuilder;
+        
+        env.get_macro().map(|m| m.placeholder_layout(env, self))
+        .unwrap_or_else(|| {
+            let mut b = LeafBuilder::new(env);
+            match self {
+                &Placeholder::Body => b.word("$body"),
+                &Placeholder::Argument(n) => b.word(&format!("${}", n)),
+                &Placeholder::Arguments => b.word("$args"),
+                &Placeholder::Unknown(ref s) => b.word(&format!("${}", s)),
+            }.build()
+        })
+    }
+}
+
+pub trait Macro: Node {
+    fn placeholder_layout(&self, env: &Environment, p: &Placeholder) -> LayoutNode;
 }
 
 
 #[derive(Debug)]
-struct Document {
-    dict: HashMap<String, Arc<DictEntry>>,
-    //root: Option<Arc<Node>>
+pub struct Ref {
+    name: String,
+    target: RefCell<Option<NodeP>>
 }
-
-#[derive(Debug, Clone)]
-enum Element {
-    Word(Arc<DictEntry>),
-    Reference(Arc<DictEntry>),
-    Symbol(Arc<DictEntry>),
-    Punctuation(Arc<DictEntry>)
-}
-
-#[derive(Debug)]
-enum NodeType {
-    Block {
-        kind:       String,
-        head:       Vec<Element>,
-        childs:     Vec<Node>
-    },
-    List {
-        childs:     Vec<Node>
-    },
-    Leaf {
-        elements:   Vec<Element>
+impl Ref {
+    pub fn new(name: String) -> Ref {
+        Ref {
+            name:   name,
+            target: RefCell::new(None)
+        }
+    }
+    pub fn resolve(&mut self, env: &Environment) {
+        *self.target.borrow_mut() = env.get_target(&self.name).cloned();
+    }
+    pub fn get(&self) -> Option<NodeP> {
+        match *self.target.borrow() {
+            Some(ref n) => Some(n.clone()),
+            None => None
+        }
+    }
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
 #[derive(Debug)]
-struct NodeData {
-    //source: String
-    content:    NodeType
+pub struct NodeList<T: Sized + Node + Clone> {
+    ws: WString<T, Stamp>
 }
-
-#[derive(Debug, Clone)]
-struct Node {
-    arc:    Arc<NodeData>
-}
-impl Node {
-    fn new(content: NodeType) -> Node {
-        Node{ arc: Arc::new(
-            NodeData{
-                content: content
-            })
-        }
+impl<T> NodeList<T> where T: Node + Clone {
+    pub fn iter(&self) -> WStringIter<T, Stamp>{
+        self.ws.iter()
     }
-}
-impl Deref for Node {
-    type Target = NodeData;
-    
-    fn deref(&self) -> &NodeData {
-        self.arc.deref()
-    }
-}
-
-struct NodeIterator {
-    // the stack contains the nodes that are about to be processed next.
-    stack:  Vec<(Node, usize)>
-}
-impl Node {
-    fn iter(&self) -> NodeIterator {
-        NodeIterator {stack: vec![(self.clone(), 0)]}
-    }
-}
- 
-impl Iterator for NodeIterator {
-    type Item = Element;
-    
-    fn next(&mut self) -> Option<Element> {
-        while let Some((node, pos)) = self.stack.pop() {
-            match node.content {
-                NodeType::Block{ childs: ref c @ _, .. }
-              | NodeType::List{ childs: ref c @ _, .. } 
-                if c.len() > pos =>
-                {
-                    self.stack.push((node.clone(), pos+1)); // push back
-                    self.stack.push((c[pos].clone(), 0));
-                },
-                
-                NodeType::Leaf{ elements: ref e @ _}
-                if e.len() > pos =>
-                {
-                    self.stack.push((node.clone(), pos+1));
-                    return Some(e[pos].clone());
-                },
-                
-                _ => {}
-            }
-        }
-        None
-    }
-}
-
-impl Document {
-    fn new() -> Document {
-        Document {
-            dict: HashMap::new()
-        }
-    }
-    
-    fn intern(&mut self, w: &str) -> Arc<DictEntry> {
-        match self.dict.get(w) {
-            Some(e) => return e.clone(),
-            None => ()
+    pub fn from<I>(io: IoRef, env: &Environment, iter: I) -> NodeList<T>
+    where I: Iterator<Item=T> {
+        let mut ws = WString::new();
+        let buf: Vec<u8> = Vec::with_capacity(1000);
+        
+        for (n, item) in iter.enumerate() {
+            let job = io.create();
+            let op = ws.ins(n, item, job.stamp());
+            //job.submit(op);
+            
+            //emit();
         }
         
-        let e = Arc::new(DictEntry::new(w));
-        let c = e.clone();
-        self.dict.insert(w.to_owned(), e);
-        return c;
-    }
-    
-    fn element_from_item(&mut self, item: &parser::Item) -> Element {
-        match *item {
-            parser::Item::Word(w) => Element::Word(self.intern(w)),
-            parser::Item::Reference(r) => Element::Reference(self.intern(r)),
-            parser::Item::Symbol(s) => Element::Symbol(self.intern(s)),
-            parser::Item::Punctuation(p) => Element::Punctuation(self.intern(p))
+        NodeList {
+            ws: ws
         }
     }
-    
-    fn list(&mut self, entries: &Vec<Vec<parser::Item>>) -> Node {
-        Node::new(
-            NodeType::List {
-                childs: entries.iter().map(|e| self.leaf(e)).collect()
-            }
-        )
+}
+impl<T> Node for NodeList<T> where T: Node + Sized + Clone + Into<NodeP> {
+    fn childs(&self, out: &mut Vec<NodeP>) {
+        for n in self.ws.iter() {
+            out.push(n.clone().into());
+        }
     }
-    
-    fn leaf(&mut self, items: &Vec<parser::Item>) -> Node {
-        Node::new(
-            NodeType::Leaf {
-                elements: items.iter().map(|i| self.element_from_item(&i)).collect()
-            }
-        )
-    }
-    
-    fn block(&mut self, b: &parser::Block) -> Node {
-        Node::new(
-            NodeType::Block {
-                kind:   b.name.to_owned(),
-                head:   b.header.iter().map(|i| self.element_from_item(&i)).collect(),
-                childs: b.body.iter().map(|child| match child {
-                    &parser::Body::Block(ref block) => self.block(block),
-                    &parser::Body::List(ref entries) => self.list(entries),
-                    &parser::Body::Leaf(ref items) => self.leaf(items)
-                }).collect()
-            }
-        )
+    fn layout(&self, env: &Environment) -> LayoutNode {
+        self.iter().map(|n| n.layout(env)).collect()
     }
 }
-
-#[test]
-fn test_document() {
-    use std::io::Read;
-    use nom::IResult;
-    
-    let mut f = File::open("doc/reference.yarn").unwrap();
-    let mut data = String::new();
-    f.read_to_string(&mut data).unwrap();
-    
-    let mut doc = Document::new();
-    let root = match parser::block(&data, 0) {
-        IResult::Done(i, b) => {
-            let root = doc.block(&b);
-            if i.len() > 0 {
-                println!("remaining:\n{:?}", i);
-                panic!("not all input parsed");
-            }
-            root
-        },
-        _ => panic!()
-    };
-}
-   

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
-use std::rc::Rc;
 use std::cell::RefCell;
 use rusttype;
 use image::{GrayImage, Luma};
@@ -19,7 +18,7 @@ pub trait Font {
 }
 
 pub trait UnscaledFont {
-    fn scale(&self, size: f32) -> Rc<Font>;
+    fn scale(&self, size: f32) -> Arc<Font>;
 }
 
 /// Abstract Type Engine that is used to produce visible text
@@ -50,14 +49,14 @@ impl RustTypeFont {
         
         assert!(glyphs.len() > 0);
         
-        let mut glyphList = Vec::with_capacity(glyphs.len());
-        glyphList.push((glyphs[0].0, 0.));
+        let mut glyph_list = Vec::with_capacity(glyphs.len());
+        glyph_list.push((glyphs[0].0, 0.));
         
         let mut prev_id = glyphs[0].0;
         let mut width = glyphs[0].1.advance_width;
         for &(id, h_metrics) in glyphs[1 ..].iter() {
             width += self.font.pair_kerning(self.scale, prev_id, id);
-            glyphList.push((id, width));
+            glyph_list.push((id, width));
             width += h_metrics.advance_width;
             prev_id = id;
         }
@@ -65,7 +64,7 @@ impl RustTypeFont {
         let w = Arc::new(RustTypeWord {
             font:       self.font.clone(),
             scale:      self.scale,
-            glyphs:     glyphList,
+            glyphs:     glyph_list,
             width:      width,
             text:       word.to_owned()
         });
@@ -116,6 +115,7 @@ impl MeasuredWord for RustTypeWord {
         }
     }
 }
+#[allow(unused_variables)]
 impl Flex for RustTypeWord {
     fn width(&self, line_width: f32) -> f32 {
         self.width
@@ -141,12 +141,12 @@ struct UnscaledRustTypeFont {
     font:   rusttype::Font<'static>
 }
 impl UnscaledFont for UnscaledRustTypeFont {
-    fn scale(&self, size: f32) -> Rc<Font> {
-        Rc::new(RustTypeFont {
+    fn scale(&self, size: f32) -> Arc<Font> {
+        Arc::new(RustTypeFont {
             font:   self.font.clone(),
             scale:  rusttype::Scale::uniform(size),
             cache:  RefCell::new(HashMap::new())
-        }) as Rc<Font>
+        }) as Arc<Font>
     }
 }
 

@@ -5,7 +5,39 @@ authors = ["Sebastian Köln <sebk@rynx.org>"]
 
 [dependencies]
 unicode_categories = "0.1.0"
-unicode-segmentation = "0.1.2"
-nom = "1.2.0"
-daggy = "0.3.0"
-# power-assert = "0.3.5"
+rusttype = "0.2.1"
+roman = "0.1.5"
+fst = "*"
+rmp = "*"
+rmp-serialize = "*"
+rustc-serialize = "*"
+lz4 = "*"
+pipe = "*"
+broadcast = "*"
+mio = "*"
+
+[dependencies.image]
+default-features = false
+features = ["png_codec"]
+version = "0.10.3"
+
+[dependencies.nom]
+git = "https://github.com/Geal/nom.git"
+default_features = false
+features = []
+#version = "0.4"
+
+[dependencies.woot]
+git = "https://github.com/s3bk/woot.git"
+
+[dependencies.slog]
+version = "*"
+
+[dev_dependencies]
+clap = {version="*", features=["yaml"]}
+
+[[bin]]
+name = "render_image"
+
+[[bin]]
+name = "hyphen_import"
