@@ -229,6 +229,7 @@ pub fn prepare_environment(e: &mut Environment) {
     use typeset::RustTypeEngine;
     use std::env::var_os;
     use std::path::Path;
+    use blocks::MacroDefinition;
     
     let data_path: PathBuf = match var_os("LOOM_DATA") {
         Some(v) => v.into(),
@@ -245,6 +246,7 @@ pub fn prepare_environment(e: &mut Environment) {
     e.set_default_font(RustTypeEngine::default().scale(20.0));
     
     e.add_command("hyphens", Box::new(cmd_hyphens));
+    //e.add_command("macro", MacroDefinition::from_block);
     
     #[derive(Debug)]
     struct HFill {}

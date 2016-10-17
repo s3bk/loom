@@ -84,7 +84,14 @@ struct DataOut {
 }
 impl io::Write for DataOut {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        trace!(self.logger, "write: {:?}", buf);
+        use std::char;
+        
+        trace!(self.logger, "write: {}", {
+            let s: String = buf.iter()
+                .map(|&b| char::from_u32(b as u32 + 0x2800).unwrap())
+                .collect();
+            s
+        });
         
         if let Some(ref mut f) = self.file {
             f.write(buf)
@@ -147,7 +154,7 @@ impl IoMachine {
         let mut queue = vec![node];
         
         while let Some(n) = queue.pop() {
-            debug!(self.logger, "insert_node: {:?}", n);
+            trace!(self.logger, "insert_node: {:?}", n);
             // add childs to quue
             n.childs(&mut queue);
             

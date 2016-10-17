@@ -93,4 +93,40 @@
        block 1        |          block 1
          |            |            |
        block 2 ~~~ Comment 1 ~~~ block 2
-       
+
+Font
+    # This is a command and executed by the environment
+    # It influcences the environment of the block above
+    # an is executed before the blockhandler is run.
+    \:loadfont LiberationSerif data/fonts/LiberationSerif-Regular.ttf
+    
+    # This is a definition used by the current block.
+    \font LiberationSerif 12pt
+    
+Spaces
+    
+
+Line Breaks
+    Alternatives
+        - original charater (sequence)
+        - 1 or more alternative sequences with an associated cost
+        
+    example:
+        <"Hello"|"Hel-"."lo">
+        < |.>
+        <"world">
+        <"!">
+        <"etc."|"et" "cetera"|<"et"."cetera">
+        
+    graph search …
+        - previous nodes are known
+        - there is only one "best" solution for a given point
+        
+    to calculate the score:
+        - position of last linebreak
+        - mode of last linebreak
+    to draw the text.
+        - mode of tokens in each line (compressed)
+
+Centered Text
+    1 < lengths ratio < 2

@@ -1,0 +1,43 @@
+Language
+    
+    How does one describe things that are not known before ?
+    
+    Language is the key to answer this question .
+    Language in the meaning of the language of mathematics ,
+    the language English , the drawn language of an engineer ,
+    the musical language or the language of philosophy .
+    
+    But before we can begin to describe this particular language,
+    the structure of language itself has to be understood .
+    
+    :part Unknowns
+        Every language has to be build from parts that are not contained within it .
+        Mathematicans call these parts axioms .
+        They choice determines the power of the language and whether it is <well defined> .
+        It is also possible that different choices define the same language .
+        A <well defined> language does not contradict iteself, and it also ensures
+        that once something is known to be valid, it remains valid independent
+        of yet unknown discoveries .
+        
+        :impl
+            Unknowns are part of the Loom language by writing
+            '!name' which then calls an build in command.
+    
+    :part Composition
+        These parts are now connected by the language itself .
+        A language that begins by describing the relations between the axioms it is
+        build upon .
+        Now two blocks can be combined by the language ,
+        extending the language itself .
+        
+        :impl
+            C
+    
+    :part Patterns
+        In every language patterns will emerge .
+        Some of these patterns are noticed and transformed to simplify the language .
+        And as these patterns originate from the language itself ,
+        they fit perfectly into it .
+    
+    The <Unknowns> are built into Loom itself .
+    They contain the concept of a word , color and font .
