@@ -7,6 +7,7 @@ use layout::{LayoutNode};
 use environment::Environment;
 use io::{Stamp, IoRef};
 use woot::{WString, WStringIter};
+use slog::Logger;
 
 /// The Document is a Directed Acyclic Graph.
 ///
@@ -132,16 +133,19 @@ impl Node for Placeholder {
     fn layout(&self, env: &Environment) -> LayoutNode {
         use blocks::LeafBuilder;
         
-        env.get_macro().map(|m| m.placeholder_layout(env, self))
-        .unwrap_or_else(|| {
-            let b = LeafBuilder::new(env);
-            match self {
-                &Placeholder::Body => b.word("$body"),
-                &Placeholder::Argument(n) => b.word(&format!("${}", n)),
-                &Placeholder::Arguments => b.word("$args"),
-                &Placeholder::Unknown(ref s) => b.word(&format!("${}", s)),
-            }.build()
-        })
+        match env.get_macro() {
+            Some(m) => m.placeholder_layout(env, self),
+            None => {
+                info!(env, "no macro set");
+                let b = LeafBuilder::new(env);
+                match self {
+                    &Placeholder::Body => b.word("$body"),
+                    &Placeholder::Argument(n) => b.word(&format!("${}", n)),
+                    &Placeholder::Arguments => b.word("$args"),
+                    &Placeholder::Unknown(ref s) => b.word(&format!("${}", s)),
+                }.build()
+            }
+        }
     }
 }
 
@@ -184,14 +188,14 @@ impl<T> NodeList<T> where T: Node + Clone {
     pub fn iter(&self) -> WStringIter<T, Stamp>{
         self.ws.iter()
     }
-    pub fn from<I>(io: IoRef, env: &Environment, iter: I) -> NodeList<T>
+    pub fn from<I>(io: IoRef, log: Logger, iter: I) -> NodeList<T>
     where I: Iterator<Item=T> {
-        trace!(env, "NodeList::from {}", (stringify!(I)));
+        trace!(log, "NodeList::from {}", (stringify!(I)));
         let mut ws = WString::new();
         let buf: Vec<u8> = Vec::with_capacity(1000);
         
         for (n, item) in iter.enumerate() {
-            trace!(env, "item {}: {:?}", n, item);
+            trace!(log, "item {}: {:?}", n, item);
             let job = io.create();
             let op = ws.ins(n, item, job.stamp());
             //job.submit(op);

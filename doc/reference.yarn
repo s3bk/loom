@@ -1,5 +1,18 @@
+/chapter
+    Chapter $args
+    
+    $body
+
+/term
+    Term $args
+    
+    $body
+
+/brief
+    Brief $args
+
 :chapter Reference
-    /:hyphens en.map
+    !hyphens en.map
     
     :term Yarn
 

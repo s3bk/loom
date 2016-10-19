@@ -2,6 +2,7 @@
 
 #[macro_use] extern crate nom;
 #[macro_use] extern crate slog;
+extern crate slog_term;
 extern crate unicode_categories;
 extern crate rusttype;
 extern crate image;

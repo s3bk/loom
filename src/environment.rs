@@ -18,7 +18,6 @@ type Handler = Fn(&mut Environment, &parser::Block) -> document::NodeP;
 /// such calls.
 pub struct Environment<'a> {
     commands:       HashMap<String, Box<Command>>,
-    blocks:         HashMap<String, Box<Handler>>,
     tokens:         HashMap<String, TokenStream>,
     hyphenator:     Option<Hyphenator>,
     
@@ -40,16 +39,6 @@ pub struct Environment<'a> {
 }
 
 impl<'a> Environment<'a> {
-    pub fn get_handler(&self, name: &str) -> Option<&Box<Handler>> {
-        match self.blocks.get(name) {
-            Some(c) => Some(c),
-            None => match self.parent {
-                Some(p) => p.get_handler(name),
-                None => None
-            }
-        }
-    }
-    
     pub fn add_command(&mut self, name: &str, cmd: Box<Command>) {
         self.commands.insert(name.to_owned(), cmd);
     }
@@ -61,9 +50,6 @@ impl<'a> Environment<'a> {
                 None => None
             }
         }
-    }
-    pub fn add_handler(&mut self, name: &str, b: Box<Handler>) {
-        self.blocks.insert(name.to_owned(), b);
     }
     pub fn use_token(&self, s: &mut TokenStream, name: &str) -> bool {
         if let Some(ts) = self.tokens.get(name) {
@@ -113,7 +99,7 @@ impl<'a> Environment<'a> {
     
     pub fn set_hyphenator(&mut self, hyphenator: Hyphenator) {
         self.hyphenator = Some(hyphenator);
-        println!("hyphenator set");
+        info!(self, "hyphenator set");
     }
     pub fn hyphenator(&self) -> Option<&Hyphenator> {
         match self.hyphenator {
@@ -178,8 +164,9 @@ impl<'a> Environment<'a> {
         self.active_macro
     }
     
-    pub fn add_target(&mut self, name: String, target: NodeP) {
-        self.targets.insert(name, target);
+    pub fn add_target(&mut self, name: &str, target: NodeP) {
+        debug!(self, "target({}) = {:?}", name, target);
+        self.targets.insert(name.to_owned(), target);
     }
     pub fn get_target(&self, name: &str) -> Option<&NodeP> {
         match self.targets.get(name) {
@@ -199,7 +186,6 @@ impl<'a> Environment<'a> {
     
     pub fn new(logger: Logger) -> Environment<'static> {
         Environment {
-            blocks:         HashMap::new(),
             tokens:         HashMap::new(),
             //words:          HashMap::new(),
             fonts:          HashMap::new(),
@@ -229,7 +215,6 @@ pub fn prepare_environment(e: &mut Environment) {
     use typeset::RustTypeEngine;
     use std::env::var_os;
     use std::path::Path;
-    use blocks::MacroDefinition;
     
     let data_path: PathBuf = match var_os("LOOM_DATA") {
         Some(v) => v.into(),
@@ -246,7 +231,6 @@ pub fn prepare_environment(e: &mut Environment) {
     e.set_default_font(RustTypeEngine::default().scale(20.0));
     
     e.add_command("hyphens", Box::new(cmd_hyphens));
-    //e.add_command("macro", MacroDefinition::from_block);
     
     #[derive(Debug)]
     struct HFill {}

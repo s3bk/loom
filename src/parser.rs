@@ -1,46 +1,97 @@
-use nom::{IResult, ErrorKind, digit};
+use nom::{self, IResult, ErrorKind, digit, AsBytes, Compare, Slice, Offset,
+InputLength, IterIndices};
 use std::iter::{Iterator};
 use unicode_categories::UnicodeCategories;
+use slog::Logger;
+use std::ops::{Range, RangeFrom, RangeTo, RangeFull};
 
+//trace_macros!(true);
+
+
+macro_rules! test_one {
+    (Done, $log:ident, $r:ident, ($rem:pat, $out:pat)) => {
+        match $r {
+            IResult::Done($rem, $out) => info!($log, "ok"),
+            IResult::Done(rem, out) => error!($log,
+                "out" => out,
+                "rem" => rem;
+                "different output"),
+            IResult::Error(e) => error!($log, "error: {:?}", e),
+            IResult::Incomplete(e) => error!($log, "incomplete: {:?}", e),
+        }
+    };
+    
+    (Error, $log:ident, $r:ident, ) => {
+        match $r {
+            IResult::Done(rem, out) => error!($log,
+                "out" => out,
+                "rem" => rem;
+                "did not fail"
+            ),
+            IResult::Error(e) => info!($log, "ok"),
+            IResult::Incomplete(e) => error!($log, "incomplete: {:?}", e),
+        }
+    }
+}
+macro_rules! test_many {
+    ( $(
+        $parser:ident ($case:expr $(, $arg:expr)* ) => $d:tt $( ( $e:pat, $f:pat ) )* ;
+        )* ) => {
+        use slog_term::streamer;
+        use slog::DrainExt;
+        let log = streamer().build().fuse();
+        
+        $(
+            let root = Logger::root(log, o!(
+                "parser" => stringify!($parser),
+                "case" => stringify!($case $(,$arg)*)));
+            
+            let b = wrap($case.into(), root);
+            let r = $parser(b $(,$arg)*);
+            test_one!($d, root, r, $( ($e, $f) )* );
+        )*
+    }
+}
 macro_rules! alt_apply {
     ($i:expr, $arg:expr, $t:ident $(| $rest:tt)*) =>
     ( alt!($i, apply!($t, $arg) $(| apply!($rest, $arg) )* ) )
 }
 
-macro_rules! test_parser {
-    (
-        $fun:ident, $testcase:expr, $remaining:expr, $result:expr
-    ) => {
-        assert_eq!($fun($testcase as &str), IResult::Done(&$remaining as &str, $result))
-    }
-}
+//type Data<'a> = &'a str;
+type Data<'a> = Baguette<'a>;
 
-
-named!(space <&str, &str>, alt!(tag_s!(" ") | tag_s!("\t")));
-
-named!(newline <&str, &str>, tag_s!("\n"));
-
-named!(endline <&str, ()>,
-    complete!(chain!(
-        many0!(space) ~
-        newline,
-        || {}
-    ))
+named!(space <Data, Data>, 
+    recognize!(many1!(alt!(tag!(" ") | tag!("\t"))))
 );
 #[test]
-fn test_endline() {
-    test_parser!(endline, "  \n", "", ());
-    test_parser!(endline, "\t\n", "", ());
-    test_parser!(endline, "\n", "", ());
+fn test_space() {
+    test_many!(
+        space("  x") => Done("x", "  ");
+        space(" \t \nx") => Done("\nx", " \t ");
+        space("\nx") => Error;
+        space("x") => Error;
+    );
 }
-named!(empty_lines <&str, usize>,
+
+named!(newline <Data, Data>, tag!("\n"));
+
+named!(endline <Data, ()>, map!(tuple!(space, newline), |_| {()}));
+#[test]
+fn test_endline() {
+    test_many!(
+        endline("  \n") => Done("", ());
+        endline("\t\n") => Done("", ());
+        endline("\n") => Done("", ());
+    );
+}
+named!(empty_lines <Data, usize>,
     map!(many1!(endline), |v: Vec<()>| { v.len() } )
 );
 
-named!(indent_any <&str, &str>,
+named!(indent_any <Data, Data>,
     alt_complete!(
-        tag_s!("    ")
-      | tag_s!("\t")
+        tag!("    ")
+      | tag!("\t")
     )
 );
 
@@ -49,10 +100,10 @@ pub enum Var<'a> {
     Name(&'a str),
     Number(usize)
 }
-named!(var <&str, Var>,
+named!(var <Data, Var>,
     alt!(
         map!(letter_sequence, |s| { Var::Name(s) }) |
-        map_opt!(digit, |s: &str| { s.parse::<usize>().ok().map(Var::Number) })
+        map_opt!(digit, |s: Data| { s.parse::<usize>().ok().map(Var::Number) })
     )
 );
 
@@ -63,13 +114,13 @@ pub enum Item<'a> {
     Reference(&'a str),
     Symbol(&'a str),
     Punctuation(&'a str),
-    Macro(Var<'a>)
+    Placeholder(Var<'a>)
 }
 
-fn letter_sequence(input: &str) -> IResult<&str, &str> {
+fn letter_sequence(input: Data) -> IResult<Data, Data> {
     //use unicode_segmentation::UnicodeSegmentation;
     //let gi = UnicodeSegmentation::grapheme_indices(input, true);
-    let mut codepoints = input.chars();
+    let mut codepoints = input.iter_elements();
     let cp = match codepoints.next() {
         Some(cp) => cp,
         None => return IResult::Error(error_position!(ErrorKind::Alpha, input))
@@ -84,102 +135,62 @@ fn letter_sequence(input: &str) -> IResult<&str, &str> {
                 if cp.is_letter() {
                     continue;
                 } else {
-                    return IResult::Done(remaining, &input[..input.len() - remaining.len()]);
+                    let p = input.input_len() - remaining.input_len();
+                    return IResult::Done(input.slice(p..), input.slice(..p));
                 }
             }
             None => break
         }
     }
     
-    IResult::Done("", input)
+    IResult::Done(input.slice(input.input_len() ..), input)
 }
 #[test]
 fn test_letter_sequence() {
-    test_parser!(letter_sequence, "hello", "", "hello");
-    test_parser!(letter_sequence, "h", "", "h");
-    test_parser!(letter_sequence, "hello world", " world", "hello");
-    test_parser!(letter_sequence, "hello\nworld", "\nworld", "hello");
-}
-#[test]
-#[should_panic]
-fn test_letter_sequence_2() {
-    test_parser!(letter_sequence, "", "", "");
-}
-named!(reference <&str, Item>,
-    chain!(
-        tag_s!(".")       ~
-        name: letter_sequence,
-        || { Item::Reference(name) }
-    )
-);
-
-fn take_until<'a>(input: &'a str, terminating: &[char]) -> IResult<&'a str, &'a str> {
-    let mut codepoints = input.chars();
-    let cp = match codepoints.next() {
-        Some(cp) => cp,
-        None => return IResult::Error(error_position!(ErrorKind::Alpha, input))
-    };
-    if terminating.contains(&cp) {
-        return IResult::Error(error_position!(ErrorKind::Alpha, input));
-    }
-    loop {
-        let remaining = codepoints.as_str();
-        match codepoints.next() {
-            Some(cp) => {
-                if terminating.contains(&cp) {
-                    return IResult::Done(remaining, &input[..input.len() - remaining.len()]);
-                }
-            }
-            None => break
-        }
-    }
-    
-    IResult::Done("", input)
-}
-#[test]
-fn test_take_until() {
-    named!(_0 <&str, &str>, apply!(take_until, &['\\', ' ']));
-    test_parser!(_0, r"hello\nworld", r"\nworld", "hello");
+    test_many!(
+        letter_sequence("hello") => Done("", "hello");
+        letter_sequence("h") => Done("", "h");
+        letter_sequence("hello world") => Done(" world", "hello");
+        letter_sequence("hello\nworld") => Done("\nworld", "hello");
+        letter_sequence("") => Error;
+    );
 }
 
-named!(string_esc <&str, String>, 
-    map!(many1!(
+fn string_esc<'a>(input: Data<'a>) -> IResult<Data<'a>, String> {
+    map!(input, many1!(
         complete!(alt!(
-            apply!(take_until, &['\\', '"'])
-          | map!(tag_s!(r"\\"),     { |_| "\\" })
-          | map!(tag_s!(r"\t"),     { |_| "\t" })
-          | map!(tag_s!(r"\n"),     { |_| "\n" })
-          | map!(tag_s!(r"\ "),     { |_| " "  })
-          | map!(tag_s!(r##"\""##), { |_| "\"" })
+            map!(take_until_either!("\\\""), { |d: Data<'a>| d.into() })
+          | map!(tag!(r"\\"),     { |_| "\\" })
+          | map!(tag!(r"\t"),     { |_| "\t" })
+          | map!(tag!(r"\n"),     { |_| "\n" })
+          | map!(tag!(r"\ "),     { |_| " "  })
+          | map!(tag!(r##"\""##), { |_| "\"" })
         ))),
         |v: Vec<&str>| v.concat()
     )
-);
+}
 
-named!(string <&str, String>,
-    alt!(
-        complete!(delimited!(tag_s!("\""), dbg!(string_esc), tag_s!("\"")))
-      | map!(apply!(take_until, &['"', ' ', '\t', '\n']), |s: &str| s.to_owned())
-    )
+named!(string <Data, String>,
+    dbg!(alt!(
+        complete!(delimited!(tag!("\""), string_esc, tag!("\"")))
+      | map!(take_until_either!("\" \t\n"), |s: Data| s.into())
+    ))
 );
 #[test]
 fn test_string() {
-    test_parser!(string, "hallo", "", String::from("hallo"));
-    test_parser!(string, "hallo welt", " welt", String::from("hallo"));
-    test_parser!(string, r"hallo\ welt", r" welt", String::from(r"hallo\"));
-    test_parser!(string, r##""hallo welt""##, "", String::from("hallo welt"));
-    test_parser!(string, r##""hallo\ welt" .."##, " ..", String::from(r"hallo welt"));
-    test_parser!(string, r##""hallo\nwelt""##, "", String::from("hallo\nwelt"));
+    test_many!(
+        string("hallo ") => Done(" ", String::from("hallo"));
+        string("hallo welt") => Done(" welt", String::from("hallo"));
+        string(r"hallo\ welt") => Done(r" welt", String::from(r"hallo\"));
+        string(r##""hallo welt""##) => Done("", String::from("hallo welt"));
+        string(r##""hallo\ welt" .."##) => Done(" ..", String::from(r"hallo welt"));
+        string(r##""hallo\nwelt""##) => Done("", String::from("hallo\nwelt"));
+    );
 }
 
-
-named!(word <&str, Item>,
-    map!(letter_sequence, |s| { Item::Word(s) })
-);
-
-fn test_chars<'a, F: Fn(char) -> bool>(input: &'a str, test: F) -> IResult<&'a str, &'a str>
+fn test_chars<'a, F: Fn(char) -> bool>(input: Data<'a>, test: F) -> IResult<Data<'a>, Data<'a>>
 {
-    let mut codepoints = input.chars();
+    let mut codepoints = input.iter_elements();
     let cp = match codepoints.next() {
         Some(cp) => cp,
         None => return IResult::Error(error_position!(ErrorKind::Alpha, input))
@@ -189,125 +200,138 @@ fn test_chars<'a, F: Fn(char) -> bool>(input: &'a str, test: F) -> IResult<&'a s
     }
     
     loop {
-        let remaining = codepoints.as_str();
+        let p = input.input_len() - codepoints.as_str().len();
         match codepoints.next() {
             Some(cp) => {
                 if test(cp) {
                     continue;
                 } else {
-                    return IResult::Done(remaining, &input[..input.len() - remaining.len()]);
+                    return IResult::Done(input.slice(p..), input.slice(..p));
                 }
             }
             None => break
         }
     }
     
-    IResult::Done("", input)
+    IResult::Done(input.slice(input.input_len() ..), input)
 }
 
-named!(symbol <&str, Item>,
-    map!(
-        apply!(test_chars, |c: char| c.is_symbol() ),
-        |s| { Item::Symbol(s) }
+fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item<'a>> {
+    alt!(input,
+        map!(preceded!(tag!("."), letter_sequence),
+            |s: Data<'a>| { Item::Reference(s.into()) }
+        )
+      | map!(preceded!(tag!("$"), var),
+            |v| { Item::Placeholder(v) }
+        )
+      | map!(letter_sequence,
+            |s: Data<'a>| { Item::Word(s.into()) }
+        )
+      | map!(apply!(test_chars, |c: char| c.is_symbol() ),
+            |s: Data<'a>| { Item::Symbol(s.into()) }
+        )
+      | map!(apply!(test_chars, |c: char| c.is_punctuation() ),
+            |s: Data<'a>| { Item::Punctuation(s.into()) }
+        )
     )
-);
-named!(punctuation <&str, Item>,
-    map!(
-        apply!(test_chars, |c: char| c.is_punctuation() ),
-        |s| { Item::Punctuation(s) }
-    )
-);
-named!(macro_var <&str, Item>,
-    map!(
-        preceded!(tag_s!("!"), var),
-        |v| { Item::Macro(v) }
-    )
-);
-
+}
 #[test]
 fn test_item() {
-    test_parser!(reference, ".foo\n", "\n", Item::Reference("foo"));
-    test_parser!(reference, ".foo baz", " baz", Item::Reference("foo"));
-    test_parser!(reference, ".baä\n", "\n", Item::Reference("baä"));
-    test_parser!(word, "foo baz", " baz", Item::Word("foo"));
+    test_many!(
+        item(".foo\n") => Done("\n", Item::Reference("foo"));
+        item(".foo baz") => Done(" baz", Item::Reference("foo"));
+        item(".baä\n") => Done("\n", Item::Reference("baä"));
+        item("foo baz") => Done(" baz", Item::Word("foo"));
+        item("$body\n") => Done("\n", Item::Placeholder(Var::Name("body")));
+        item("$3\n") => Done("\n", Item::Placeholder(Var::Number(3)));
+    );
 }
 
-named!(item <&str, Item>,
-    alt!( reference | word | symbol | punctuation | macro_var )
-);
-
-fn spaces(input: &str) -> IResult<&str, Vec<&str>> {
-    many1!(input, space)
-}
-fn leaf_indent(input: &str, expected_indent: usize) -> IResult<&str, Vec<&str>> {
-    preceded!(input,
-        endline,
-        count!(indent_any, expected_indent)
+fn leaf_indent(input: Data, expected_indent: usize) -> IResult<Data, Data> {
+    recognize!(input,
+        complete!(preceded!(
+            endline,
+            count!(indent_any, expected_indent)
+        ))
     )
 }
-fn leaf_seperator(input: &str, expected_indent: usize) -> IResult<&str, Vec<&str>> {
+fn leaf_seperator(input: Data, expected_indent: usize) -> IResult<Data, Data> {
     alt_complete!(input,
         apply!(leaf_indent, expected_indent) |
-        spaces
+        space
     )
 }
-fn leaf<'a>(input: &'a str, expected_indent: usize) -> IResult<&'a str, Vec<Item<'a>>> {
-    chain!(input,
-            complete!(count!(indent_any, expected_indent)) ~
-    items:  separated_nonempty_list!(
-                apply!(leaf_seperator, expected_indent),
-                item
-            ) ~
-            endline,
-        || { items }
+fn leaf<'a>(input: Data<'a>, expected_indent: usize) -> IResult<Data<'a>, Vec<Item<'a>>> {
+    delimited!(input,
+        complete!(count!(indent_any, expected_indent)),
+        separated_nonempty_list!(
+            apply!(leaf_seperator, expected_indent),
+            item
+        ),
+        endline
     )
 }
 #[test]
 fn test_leaf() {
-    named!(_0 <&str, Vec<Item> >, apply!(leaf, 0));
-    named!(_2 <&str, Vec<Item> >, apply!(leaf, 2));
-    
-    test_parser!(_0, "x\n", "", vec![Item::Word("x")]);
-    test_parser!(_0, "x \n", "", vec![Item::Word("x")]);
-    test_parser!(_0, "x \ny\n", "", vec![Item::Word("x"), Item::Word("y")]);
-    test_parser!(_0, "Hello world\nThis is the End .\n", "", vec![
-        Item::Word("Hello"), Item::Word("world"), Item::Word("This"),
-        Item::Word("is"), Item::Word("the"), Item::Word("End"), Item::Punctuation(".")]);
-    test_parser!(_2, "        foo\n        bar \n", "",
-                     vec![Item::Word("foo"),Item::Word("bar")]);
+    test_many!(
+        leaf("x\n\ne", 0) => Done("\ne", vec![Item::Word("x")]);
+        leaf("x \n", 0) => Done("", vec![Item::Word("x")]);
+        leaf("x $y\n", 0) => Done("", vec![
+            Item::Word("x"),
+            Item::Placeholder(Var::Name("y"))
+        ]);
+        leaf("x \ny\n", 0) => Done("", vec![Item::Word("x"), Item::Word("y")]);
+        leaf("Hello world\nThis is the End .\n") => Done("", vec![
+            Item::Word("Hello"),
+            Item::Word("world"),
+            Item::Word("This"),
+            Item::Word("is"),
+            Item::Word("the"),
+            Item::Word("End"),
+            Item::Punctuation(".")
+        ]);
+        leaf("        foo\n        bar \n", 2) => Done("", vec![
+            Item::Word("foo"),
+            Item::Word("bar")
+        ]);
+    );
 }
 
-fn list_item(input: &str, expected_indent: usize) -> IResult<&str, Vec<Item>> {
+fn list_item(input: Data, expected_indent: usize) -> IResult<Data, Vec<Item>> {
     preceded!(input,
         complete!(tuple!(
             count!(indent_any, expected_indent),
-            tag_s!("  - ")
+            tag!("  - ")
         )),
         separated_nonempty_list!(
             alt_complete!(
-                spaces |
-                apply!(leaf_indent, expected_indent + 1)
+                dbg!(space) |
+                dbg!(apply!(leaf_indent, expected_indent + 1))
             ),
-            item
+            dbg!(item)
         )
     )
 }
 #[test]
 fn test_list_item() {
-    named!(_0 <&str, Vec<Item> >, apply!(list_item, 0));
-    named!(_1 <&str, Vec<Item> >, apply!(list_item, 1));
-    
-    test_parser!(_0, "  - hello world", "",
-        vec![Item::Word("hello"), Item::Word("world")]);
-    test_parser!(_1, "      - hello", "", vec![Item::Word("hello")]);
-    test_parser!(_0, "  - hello\n    world", "",
-        vec![Item::Word("hello"), Item::Word("world")]);
+    test_many!(
+        list_item("  - hello world", 0) => Done("", vec![
+            Item::Word("hello"),
+            Item::Word("world")
+        ]);
+        list_item("      - hello", 1) => Done("", vec![Item::Word("hello")]);
+        list_item("  - hello\n    world\n", 0) => Done("\n", vec![
+            Item::Word("hello"),
+            Item::Word("world")
+        ]);
+    );
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Parameter<'a> {
     pub name: &'a str,
-    pub value: Vec<Item<'a>>
+    pub args: Vec<Item<'a>>,
+    pub value: BlockBody<'a>
 }
 
 #[derive(Debug, PartialEq)]
@@ -320,11 +344,16 @@ pub struct Command<'a> {
 pub struct Block<'a> {
     pub name:       &'a str,
     pub argument:   Vec<Item<'a>>,
+    pub body:       BlockBody<'a>
+}
+
+#[derive(Debug, PartialEq)]
+pub struct BlockBody<'a> {
     pub commands:   Vec<Command<'a>>,
     pub parameters: Vec<Parameter<'a>>,
-    pub body:       &'a str,
-    pub indent:     usize
+    pub childs:     Vec<Body<'a>>
 }
+
 #[derive(Debug, PartialEq)]
 pub enum Body<'a> {
     Leaf(Vec<Item<'a>>),
@@ -333,13 +362,14 @@ pub enum Body<'a> {
     Placeholder(Var<'a>)
 }
 
-fn block_leaf(input: &str, indent_level: usize) -> IResult<&str, Body> {
+fn block_leaf(input: Data, indent_level: usize) -> IResult<Data, Body> {
     map!(input,
         apply!(leaf, indent_level),
         |items| { Body::Leaf(items) }
     )
 }
-fn block_list(input: &str, indent_level: usize) -> IResult<&str, Body> {
+
+fn block_list(input: Data, indent_level: usize) -> IResult<Data, Body> {
     //println!("list_item at level {}", indent_level + 1);
     map!(input,
         complete!(many1!(
@@ -348,126 +378,355 @@ fn block_list(input: &str, indent_level: usize) -> IResult<&str, Body> {
         |l| Body::List(l)
     )
 }
-fn block_block(input: &str, indent_level: usize) -> IResult<&str, Body> {
+fn block_block(input: Data, indent_level: usize) -> IResult<Data, Body> {
     map!(input,
         complete!(apply!(block, indent_level)),
         |b| Body::Block(b)
     )
 }
-fn block_placeholder(input: &str, indent_level: usize) -> IResult<&str, Body> {
-    chain!(input,
-            apply!(leaf_indent, indent_level + 1) ~
-            tag_s!("$") ~
-        var:  var ~
-            endline,
-        || { Body::Placeholder(var) }
+fn block_placeholder(input: Data, indent_level: usize) -> IResult<Data, Body> {
+    do_parse!(input,
+            complete!(count!(indent_any, indent_level))
+    >>      tag!("$")
+    >> var: var
+    >>      endline
+    >>     (Body::Placeholder(var))
+    )
+}
+#[test]
+fn test_block_placeholder() {
+    test_many!(
+        block_placeholder("    $foo\n", 1) =>
+            Done("", Body::Placeholder(Var::Name("foo")));
+    );
+}
+
+pub fn block_body(input: Data, indent_level: usize) -> IResult<Data, BlockBody> {
+    do_parse!(input,
+          commands: many0!(apply!(command, indent_level))
+    >>  parameters: many0!(apply!(pattern, indent_level))
+    >>      childs: many0!(terminated!(
+                        alt_apply!(indent_level,
+                            block_leaf | block_list | block_block | block_placeholder
+                        ),
+                        opt!(empty_lines)
+                    ))
+    >>             (BlockBody {
+                        commands:   commands,
+                        parameters: parameters,
+                        childs:     childs,
+                    })
+    )
+}
+pub fn command(input: Data, indent_level: usize) -> IResult<Data, Command> {
+    do_parse!(input,
+                complete!(count!(indent_any, indent_level))
+    >>          tag!("!")
+    >>    name: letter_sequence
+    >>          space
+    >>    args: separated_list!(space, string)
+    >>          endline
+    >>          opt!(empty_lines)
+    >>         (Command { name: name, args: args })
+    )
+}
+pub fn pattern(input: Data, indent_level: usize) -> IResult<Data, Parameter> {
+    do_parse!(input,
+              complete!(count!(indent_any, indent_level))
+    >>        tag!("/")
+    >>  name: letter_sequence
+    >>        space
+    >>  args: separated_list!(space, item)
+    >>        endline
+    >> value: apply!(block_body, indent_level + 1)
+    >>       (Parameter { name: name, args: args, value: value })
     )
 }
 
-pub fn block_body(input: &str, indent_level: usize) -> IResult<&str, Vec<Body>> {
-    many0!(input,
-        terminated!(
-            alt_apply!(indent_level,
-                block_leaf | block_list | block_block | block_placeholder
-            ),
-            opt!(empty_lines)
-        )
-    )
-}
-pub fn command(input: &str, indent_level: usize) -> IResult<&str, Command> {
-    complete!(input,
-        chain!(
-            complete!(count!(indent_any, indent_level+1)) ~
-            tag_s!("/:") ~
-      name: letter_sequence ~
-            spaces ~
-      args: separated_list!(spaces, string) ~
-            endline
-    , || { Command { name: name, args: args } }
-        )
-    )
-}
-pub fn parameter(input: &str, indent_level: usize) -> IResult<&str, Parameter> {
-    complete!(input,
-        chain!(
-            complete!(count!(indent_any, indent_level+1)) ~
-            tag_s!("/") ~
-      name: letter_sequence ~
-            spaces ~
-     value: separated_list!(spaces, item) ~
-            endline
-    , || { Parameter { name: name, value: value } }
-        )
-    )
-}
-
-pub fn block(input: &str, indent_level: usize) -> IResult<&str, Block> {
-    //println!("block at level {}:", indent_level);
-    chain!(input,
-                complete!(count!(indent_any, indent_level)) ~
-                complete!(tag_s!(":")) ~
-          name: letter_sequence ~
-                spaces? ~
-      argument: separated_list!(spaces, item) ~
-                endline ~
-      commands: many0!(apply!(command, indent_level)) ~
-    parameters: many0!(apply!(parameter, indent_level)) ~
-                empty_lines? ~
-          body: recognize!(many0!(
-                    preceded!(
-                        complete!(count!(indent_any, indent_level+1)),
-                        take_until_and_consume!("\n")
-                    )
-                )),
-        || {
-            Block {
-                name:       name,
-                argument:   argument,
-                commands:   commands,
-                parameters: parameters,
-                body:       body,
-                indent:     indent_level
+#[test]
+fn test_pattern_1() {
+    test_many!(
+        pattern("/foo x\n", 0) => Done("", Parameter {
+            name:   "foo",
+            args:   vec![Item::Word("x")],
+            value:  BlockBody {
+                commands:   vec![],
+                parameters: vec![],
+                childs:     vec![],
             }
-        }
+        });
+    );
+}
+#[test]
+fn test_pattern_2() {
+    test_many!(
+        pattern("/foo x\n    bar\n", 0) => Done("", Parameter {
+            name:   "foo",
+            args:   vec![Item::Word("x")],
+            value:  BlockBody {
+                commands:   vec![],
+                parameters: vec![],
+                childs:     vec![
+                    Body::Leaf(vec![
+                        Item::Word("bar")
+                    ])
+                ]
+            }
+        });
+    );
+}
+#[test]
+fn test_pattern_3() {
+    test_many!(
+        pattern("/foo x\n    bar $baz\n", 0) => Done("", Parameter {
+            name:   "foo",
+            args:   vec![Item::Word("x")],
+            value:  BlockBody {
+                commands:   vec![],
+                parameters: vec![],
+                childs:     vec![
+                    Body::Leaf(vec![
+                        Item::Word("bar"),
+                        Item::Placeholder(Var::Name("baz"))
+                    ])
+                ]
+            }
+        });
+    );
+}
+
+pub fn block(input: Data, indent_level: usize) -> IResult<Data, Block> {
+    //println!("block at level {}:", indent_level);
+    do_parse!(input,
+                complete!(count!(indent_any, indent_level))
+    >>          complete!(tag_s!(":"))
+    >>    name: letter_sequence
+    >>          opt!(space)
+    >>     arg: separated_list!(space, item)
+    >>          endline
+    >>          opt!(empty_lines)
+    >>    body: apply!(block_body, indent_level + 1)
+    >>         (Block {
+                    name:       name.into(),
+                    argument:   arg,
+                    body:       body
+                })
     )
 }
 #[test]
 fn test_block_1() {
-    named!(_0 <&str, Block>, apply!(block, 0));
-    
-    test_parser!(_0, "\
-:hello world
-    X
-", "",
-        Block {
-            indent:     0,
-            name:       "hello",
-            argument:   vec![Item::Word("world")],
-            commands:   vec![],
-            parameters: vec![],
-            body:       "    X\n"
-        }
-    );
-    
-    test_parser!(_0, "\
-:foo
-    /:answer \"40\\ +\\ 2\"
-    /x y
-",
-        "", 
-        Block {
-            indent:     0,
+    test_many!(
+        block(":foo\n    x\n", 0) => Done("", Block {
             name:       "foo",
             argument:   vec![],
-            commands:   vec![
-                Command { name: "answer", args: vec!["40 + 2".to_owned()] }
-            ],
-            parameters: vec![
-                Parameter { name: "x", value: vec![Item::Word("y")] }
-            ],
-            body: ""
-        }
+            body: BlockBody {
+                commands:   vec![],
+                parameters: vec![],
+                childs:     vec![
+                    Body::Leaf(vec![
+                        Item::Word("x"),
+                    ])
+                ]
+            }
+        });
+    );
+}
+#[test]
+fn test_block_2() {
+    test_many!(
+        block(":foo\n\n   x\n", 0) => Done("", Block {
+            name:       "foo",
+            argument:   vec![],
+            body: BlockBody {
+                commands:   vec![],
+                parameters: vec![],
+                childs:     vec![
+                    Body::Leaf(vec![
+                        Item::Word("x"),
+                    ])
+                ]
+            }
+        });
+    );
+}
+#[test]
+fn test_block_3() {
+    test_many!(
+        block(":foo\n    !x\n    x\n", 0) => Done("", Block {
+            name:       "foo",
+            argument:   vec![],
+            body: BlockBody {
+                commands: vec![
+                    Command {
+                        name:   "x",
+                        args:   vec![]
+                    }
+                ],
+                parameters: vec![],
+                childs:     vec![
+                    Body::Leaf(vec![
+                        Item::Word("x"),
+                    ])
+                ]
+            }
+        });
     );
 }
 
+fn count_lines(data: &str, offset: usize) -> (usize, usize) {
+    if let Some((n, last)) = data.lines().enumerate().last() {
+        (n+1, last.len())
+    } else {
+        (0, offset)
+    }
+}
 
+use std;
+pub struct Baguette<'a> {
+    // full input data
+    data:           &'a str,
+    
+    // current slice
+    slice:          &'a str,
+    
+    line:           usize,
+    line_offset:    usize,
+    
+    logger:         Logger
+}
+impl<'a> Baguette<'a> {
+    fn parse<F>(&self) -> Result<F, F::Err> where F: std::str::FromStr {
+        self.slice.parse()
+    }
+}
+impl<'a> Into<&'a str> for Baguette<'a> {
+    fn into(self) -> &'a str {
+        self.slice
+    }
+}
+impl<'a> Into<String> for Baguette<'a> {
+    fn into(self) -> String {
+        self.slice.to_owned()
+    }
+}
+impl<'a> std::fmt::Debug for Baguette<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        self.slice.fmt(f)
+    }
+}   
+
+impl<'a> AsBytes for Baguette<'a> {
+    fn as_bytes(&self) -> &[u8] {
+        self.data.as_bytes()
+    }
+}
+impl<'a, 'b> Compare<&'b str> for Baguette<'a> {
+    fn compare(&self, o: &'b str) -> nom::CompareResult {
+        self.slice.compare(o);
+    }
+    
+    fn compare_no_case(&self, o: &'b str) -> nom::CompareResult {
+        use nom::Compare;
+        self.slice.compare_no_case(o);
+    }
+}
+impl<'a> Slice<Range<usize>> for Baguette<'a> {
+    fn slice(&self, r: Range<usize>) -> Baguette<'a> {
+        let (lines, offset) = count_lines(&self.slice[.. r.start], self.line_offset);
+        Baguette {
+            data:           self.data,
+            slice:          self.slice.slice(r),
+            line:           self.line + lines,
+            line_offset:    offset,
+            logger:         self.logger.clone()
+        }
+    }
+}
+impl<'a> Slice<RangeFrom<usize>> for Baguette<'a> {
+    fn slice(&self, r: RangeFrom<usize>) -> Baguette<'a> {
+        let (lines, offset) = count_lines(&self.data[.. r.start], self.offset);
+        Baguette {
+            data:           self.data,
+            slice:          self.slice.slice(r),
+            line:           self.line + lines,
+            line_offset:    offset,
+            logger:         self.logger.clone()
+        }
+    }
+}
+impl<'a> Slice<RangeTo<usize>> for Baguette<'a> {
+    fn slice(&self, r: RangeTo<usize>) -> Baguette<'a> {
+        Baguette {
+            data:           self.data,
+            slice:          self.slice.slice(r),
+            line:           self.line,
+            line_offset:    self.line_offset,
+            logger:         self.logger.clone()
+        }
+    }
+}
+impl<'a> Slice<RangeFull> for Baguette<'a> {
+    fn slice(&self, r: RangeFull) -> Baguette<'a> {
+        Baguette {
+            data:           self.data,
+            slice:          self.slice,
+            line:           self.line,
+            line_offset:    self.line_offset,
+            logger:         self.logger.clone()
+        }
+    }
+}
+impl<'a> Offset for Baguette<'a> {
+    fn offset(&self, second: &Baguette) -> usize {
+        second.slice.as_ptr() as usize - self.slice.as_ptr() as usize
+    }
+}
+impl<'a> InputLength for Baguette<'a> {
+    fn input_len(&self) -> usize {
+        self.slice.len()
+    }
+}
+impl<'a> IterIndices for Baguette<'a> {
+    type Item     = char;
+    type RawItem  = char;
+    type Iter     = std::str::CharIndices<'a>;
+    type IterElem = std::str::Chars<'a>;
+    #[inline]
+    fn iter_indices(self) -> std::str::CharIndices<'a> {
+        self.slice.char_indices()
+    }
+    #[inline]
+    fn iter_elements(self) -> std::str::Chars<'a> {
+      self.slice.chars()
+    }
+    fn position<P>(&self, predicate: P) -> Option<usize> where P: Fn(Self::RawItem) -> bool {
+      for (o,c) in self.slice.char_indices() {
+        if predicate(c) {
+          return Some(o)
+        }
+      }
+      None
+    }
+    #[inline]
+    fn index(&self, count: usize) -> Option<usize> {
+      let mut cnt    = 0;
+      for (index, _) in self.slice.char_indices() {
+        if cnt == count {
+          return Some(index)
+        }
+        cnt += 1;
+      }
+      None
+    }
+}
+pub fn wrap(data: &str, logger: Logger) -> Baguette {
+    Baguette {
+        data:           data,
+        slice:          data,
+        line:           0,
+        line_offset:    0,
+        logger:         logger
+    }
+}
+
+trace_macros!(false);

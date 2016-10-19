@@ -96,28 +96,6 @@ macro_rules! leaf_complete {
 }
 
 #[derive(Debug)]
-struct Param {
-    name:   String,
-    value:  P<Leaf>
-}
-impl Node for Param {
-    fn childs(&self, out: &mut Vec<NodeP>) {
-        out.push(self.value.clone().into())
-    }
-    fn layout(&self, _: &Environment) -> LayoutNode {
-        unimplemented!()
-    }
-}
-impl Param {
-    fn from(io: IoRef, env: &Environment, p: &parser::Parameter) -> Param {
-        Param {
-            name:   p.name.to_string(),
-            value:  P::new(Leaf::from(io, env, &p.value))
-        }
-    }
-}
-
-#[derive(Debug)]
 struct ErrorBlock(String);
 impl Node for ErrorBlock {
     fn layout(&self, env: &Environment) -> LayoutNode {
@@ -127,65 +105,38 @@ impl Node for ErrorBlock {
 
 
 /// process the block and return the resulting layoutgraph
-fn process_block(env: &Environment, b: &parser::Block) -> P<Node> {
+fn process_block(io: IoRef, env: &Environment, b: &parser::Block) -> P<Node> {
     // look up the name
     debug!(env, "process_block name: {}", (b.name));
-    match env.get_handler(b.name) {
-        Some(handler) => {
-            // prepare new environment
-            let mut env_inner = env.extend(o!(
-                "env" => "process_block"
-            ));
-            
-            // execute commands
-            for cmd in b.commands.iter() {
-                match env.get_command(cmd.name) {
-                    Some(ref c) => {
-                        c(&mut env_inner, &cmd.args);
-                    },
-                    None => println!("command not found: {:?}", cmd)
-                }
-            }
-            
-            // run the handler
-            trace!(env, "call handler {:p}", handler);
-            handler(&mut env_inner, b)
-        },
-        None => {
-            warn!(env, "handler {} not found", (b.name));
-            P::new(ErrorBlock(format!("unresolved '{}'", b.name))).into()
-        }
-    }
+    P::from(Pattern::from_block(io, env, b)).into()
 }
 
-fn process_body(io: IoRef, env: &Environment, body: &str, indent: usize) -> NodeP {
+type DefinitionListP = P<NodeList<P<Definition>>>;
+fn defines(io: IoRef, env: &mut Environment, params: &[parser::Parameter]) -> DefinitionListP {
+    let log = env.logger(o!("NodeList" => "defines"));
+    P::new(NodeList::from(io.clone(), log,
+        params.iter()
+        .map(|p| {
+            let d = P::new(Definition::from_param(io.clone(), env, p));
+            env.add_target(d.name(), d.clone().into());
+            d
+        })
+    ))
+}
+
+fn process_body(io: IoRef, env: &Environment, childs: &[parser::Body]) -> P<NodeList<NodeP>> {
     use parser::Body;
-    use nom::IResult;
     
-    trace!(env, "process_body");
-    match parser::block_body(body, indent) {
-        IResult::Done(rem, childs) => {
-            println!("remaining:\n{}", rem);
-            let nl: NodeList<NodeP> = NodeList::from(io.clone(), env,
-                childs.iter()
-                .map(|node| match node {
-                    &Body::Block(ref b) => process_block(env, b),
-                    &Body::Leaf(ref items) => P::new(Leaf::from(io.clone(), env, &items)).into(),
-                    &Body::List(ref items) => P::new(List::from(io.clone(), env, items)).into(),
-                    &Body::Placeholder(ref v) => P::new(process_placeholder(v)).into()
-                })
-            );
-            P::new(nl).into()
-        },
-        IResult::Error(e) => {
-            warn!(env, "Error: {:?}", e);
-            P::new(ErrorBlock(format!("parser error {:?}", e))).into()
-        },
-        IResult::Incomplete(n) => {
-            warn!(env, "Incomplete: {:?} bytes missing", n);
-            P::new(ErrorBlock(format!("incomplete"))).into()
-        }
-    }
+    let log = env.logger(o!("NodeList" => "process_body"));
+    P::new(NodeList::from(io.clone(), log,
+        childs.iter()
+        .map(|node| match node {
+            &Body::Block(ref b) => process_block(io.clone(), env, b),
+            &Body::Leaf(ref items) => P::new(Leaf::from(io.clone(), env, &items)).into(),
+            &Body::List(ref items) => P::new(List::from(io.clone(), env, items)).into(),
+            &Body::Placeholder(ref v) => P::new(process_placeholder(v)).into()
+        })
+    ))
 }
 
 #[derive(Debug)]
@@ -225,6 +176,7 @@ fn process_placeholder(v: &parser::Var) -> Placeholder {
     match v {
         &Var::Name(ref name) => match name {
             &"body" => Placeholder::Body,
+            &"args" => Placeholder::Arguments,
             _ => Placeholder::Unknown(name.to_string())
         },
         &Var::Number(n) => Placeholder::Argument(n)
@@ -238,7 +190,7 @@ fn item_node(i: &parser::Item) -> NodeP {
         &Item::Reference(ref s) => P::new(Word::new(s, Role::Word)).into(),
         &Item::Symbol(ref s) |
         &Item::Punctuation(ref s) => P::new(Word::new(s, Role::Punctuation)).into(),
-        &Item::Macro(ref v) => P::new(process_placeholder(v)).into()
+        &Item::Placeholder(ref v) => P::new(process_placeholder(v)).into()
     }
 }
 
@@ -249,7 +201,11 @@ pub struct Leaf {
 impl Leaf {
     pub fn from(io: IoRef, env: &Environment, items: &[parser::Item]) -> Leaf {
         Leaf {
-            items: P::new(NodeList::from(io, env, items.iter().map(item_node)))
+            items: P::new(NodeList::from(
+                io,
+                env.logger(o!("NodeList" => "Leaf::from")),
+                items.iter().map(item_node)
+            ))
         }
     }
     pub fn get(&self, n: usize) -> Option<NodeP> {
@@ -291,8 +247,10 @@ struct List {
 impl List {
     pub fn from(io: IoRef, env: &Environment, items: &[Vec<parser::Item>]) -> List {
         List {
-            items: NodeList::from(io.clone(), env, items.iter().map(|i|
-                P::new(Cached::new(Leaf::from(io.clone(), env, i)))
+            items: NodeList::from(
+                io.clone(),
+                env.logger(o!("NodeList" => "List::from")),
+                items.iter().map(|i| P::new(Cached::new(Leaf::from(io.clone(), env, i)))
             ))
         }
     }
@@ -316,76 +274,89 @@ impl Node for List {
 
 #[derive(Debug)]
 pub struct RootNode {
-    child: NodeP
+    defines:    DefinitionListP,
+    child:      NodeP
 }
 impl RootNode {
     pub fn parse(io: IoRef, env: &Environment, s: &str) -> NodeP {
+        use nom::IResult;
+        
+        let input = parser::wrap(s, env.logger(vec![]));
+        let b = match parser::block_body(input, 0) {
+            IResult::Done(rem, b) => {
+                println!("{:?}", rem);
+                b
+            },
+            IResult::Error(e) => {
+                println!("{:?}", e);
+                panic!();
+            },
+            _ => panic!()
+        };
+        
+        let mut env = env.extend(o!());
         P::new(RootNode {
-            child: process_body(io, env, s, 0)
+            defines:    defines(io.clone(), &mut env, &b.parameters),
+            child:      process_body(io, &env, &b.childs).into()
         }).into()
     }
 }
 impl Node for RootNode {
     fn childs(&self, out: &mut Vec<NodeP>) {
-        out.push(self.child.clone())
+        out.push(self.defines.clone().into());
+        out.push(self.child.clone());
     }
     fn layout(&self, env: &Environment) -> LayoutNode {
-        self.child.layout(env)
+        trace!(env, "RootNode::layout()");
+        let mut env2 = env.extend(o!("env" => "RootNode::layout"));
+        for d in self.defines.iter() {
+            env2.add_target(d.name(), d.clone().into());
+        }
+        self.child.layout(&env2)
     }
-}
-
-fn parameters(io: IoRef, env: &Environment, params: &[parser::Parameter])
--> NodeList<P<Param>> {
-    NodeList::from(io.clone(), env, params.iter().map(|p|
-        P::new(Param::from(io.clone(), env, p)).into()
-    ))
 }
 
 #[derive(Debug)]
-pub struct MacroDefinition {
+pub struct Definition {
     // the name of the macro
     name:   String,
     
-    // arguments to the macro declaration
-    args:   P<Leaf>,
-    
-    // parameters for the macro declartion
-    params: P<NodeList<P<Param>>>,
-    
     // body of the macro declaration
-    childs: NodeP,
+    body: P<NodeList<NodeP>>,
     
     // referencing macro invocations
     references: RefCell<Vec<Weak<Node>>>
 }
-impl Node for MacroDefinition {
+impl Node for Definition {
     fn childs(&self, out: &mut Vec<NodeP>) {
-        out.push(self.childs.clone());
-        out.push(self.args.clone().into());
-        out.push(self.params.clone().into());
+        out.push(self.body.clone().into());
     }
     fn layout(&self, env: &Environment) -> LayoutNode {
-        self.childs.layout(env)
+        trace!(env, "Definition::layout() {}", (self.name));
+        self.body.layout(env)
     }
     fn add_ref(&self, source: &Rc<Node>) {
         self.references.borrow_mut().push(Rc::downgrade(source));
     }
 }
 
-impl MacroDefinition {
-    fn from_block(io: IoRef, env: &Environment, b: &parser::Block) -> NodeP {
-        P::new(MacroDefinition {
-            name:   b.name.to_string(),
-            args:   P::new(Leaf::from(io.clone(), env, &b.argument)),
-            params: P::new(parameters(io.clone(), env, &b.parameters)),
-            childs: process_body(io.clone(), env, b.body, b.indent),
+impl Definition {
+    fn from_param(io: IoRef, env: &Environment, p: &parser::Parameter) -> Definition {
+        let mut env = env.extend(o!("define" => (p.name.to_string())));
+        Definition {
+            name:       p.name.to_string(),
+            body:       process_body(io, &env, &p.value.childs),
             references: RefCell::new(vec![])
-        }).into()
+        }
+    }
+    
+    fn name(&self) -> &str {
+        &self.name
     }
 }
 
 #[derive(Debug)]
-pub struct MacroInstance {
+pub struct Pattern {
     // the macro itself
     target: Ref,
     
@@ -393,12 +364,12 @@ pub struct MacroInstance {
     args:   P<Leaf>,
     
     // parameters for the macro
-    params: P<NodeList<P<Param>>>,
+    defines: DefinitionListP,
     
     // body of the macro invocation
-    childs: NodeP,
+    childs: P<NodeList<NodeP>>,
 }
-impl Macro for MacroInstance {
+impl Macro for Pattern {
     fn placeholder_layout(&self, env: &Environment, p: &Placeholder) -> LayoutNode {
         match p {
             &Placeholder::Body          => self.childs.layout(env),
@@ -414,35 +385,45 @@ impl Macro for MacroInstance {
         }
     }
 }
-impl MacroInstance {
-    fn from_block(io: IoRef, env: &Environment, b: &parser::Block) -> NodeP {
-        let mut p = P::new(MacroInstance {
-            args:   P::new(Leaf::from(io.clone(), env, &b.argument)),
-            params: P::new(parameters(io.clone(), env, &b.parameters)),
-            childs: process_body(io.clone(), env, b.body, b.indent),
-            target: Ref::new(b.name.to_string())
+impl Pattern {
+    fn from_block(io: IoRef, env: &Environment, block: &parser::Block) -> NodeP {
+        use nom::IResult;
+        
+        let mut inner_env = env.extend(o!("pattern" => (block.name.to_string())));
+        
+        let ref body = block.body;
+        let mut p = P::new(Pattern {
+            args:       P::new(Leaf::from(io.clone(), &env, &block.argument)),
+            defines:    defines(io.clone(), &mut inner_env, &body.parameters),
+            childs:     process_body(io.clone(), &inner_env, &body.childs),
+            target:     Ref::new(block.name.to_string())
         });
+        trace!(inner_env, "resolving");
         {
-            let mut mi: &mut MacroInstance = p.get_mut().unwrap();
+            let mut mi: &mut Pattern = p.get_mut().unwrap();
             mi.target.resolve(env);
         }
         p.into()
     }
 }
-impl Node for MacroInstance {
+impl Node for Pattern {
     fn childs(&self, out: &mut Vec<NodeP>) {
-        out.push(self.childs.clone());
+        out.push(self.childs.clone().into());
         out.push(self.args.clone().into());
-        out.push(self.params.clone().into());
+        out.push(self.defines.clone().into());
     }
     fn layout(&self, env: &Environment) -> LayoutNode {
         // the Environment will solve it.
         if let Some(ref target) = self.target.get() {
-            let mut env2 = env.extend(o!("env" => "MacroInstance"));
+            let mut env2 = env.extend(o!("env" => "Definition"));
+            for d in self.defines.iter() {
+                env2.add_target(d.name(), d.clone().into());
+            }
             env2.set_macro(self);
             target.layout(&env2)
         } else {
-            leaf!(env, "Unresolved", _, "macro", _, "'", self.target.name(), "'", newline)
+            leaf!(env, "Unresolved", _, "macro", _, "'", self.target.name(),
+                "'", /hfill, newline)
         }
     }
 }

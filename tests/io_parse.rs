@@ -54,11 +54,6 @@ fn render(log_root: Logger, io: IoMachine) {
     }
 }
 
-#[test]
-fn test_io() {
-    let log_root = Logger::root(streamer().build().fuse(), o!("test" => "test_io"));
-    prepare(log_root);
-}
 
 #[test]
 fn test_render() {

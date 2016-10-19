@@ -24,16 +24,19 @@ version = "0.10.3"
 
 [dependencies.nom]
 git = "https://github.com/Geal/nom.git"
-default_features = false
-features = []
+#git = "https://github.com/s3bk/nom.git"
+#path = "../nom"
+#default_features = false
+#features = []
 #version = "0.4"
 
 [dependencies.woot]
 git = "https://github.com/s3bk/woot.git"
+#path = "../woot"
 
 [dependencies.slog]
 version = "*"
-features = ["max_level_trace"]
+#features = ["max_level_trace"]
 
 [[bin]]
 name = "render_image"
