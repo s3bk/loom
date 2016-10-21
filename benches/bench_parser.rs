@@ -10,5 +10,5 @@ use test::Bencher;
 #[bench]
 fn bench_block(b: &mut Bencher) {
     let reference = include_str!("../doc/reference.yarn");
-    b.iter(|| parser::block_body(reference, 0));
+    b.iter(move || parser::block_body(nom::slug::wrap(reference), 0));
 }

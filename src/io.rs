@@ -11,9 +11,8 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use woot::{WString, WStringIter, IncrementalStamper, Key};
 use document::{Node, NodeP};
-use layout::LayoutNode;
+use layout::TokenStream;
 use environment::{Environment, prepare_environment};
-use slog::Logger;
 
 pub use rmp_serialize::{Encoder, Decoder};
 
@@ -43,7 +42,6 @@ pub struct IoMachine {
     nodes:      HashMap<Stamp, NodeP>,
     stamper:    RefCell<IncrementalStamper<u32, u32>>,
     typelist:   Vec<NodeType>,
-    logger:     Logger,
     active:     Option<(NodeP, Environment<'static>)>
 }
 pub struct IoCreate<'a> {
@@ -79,14 +77,13 @@ impl<'a> IoRef<'a> {
 }
 
 struct DataOut {
-    logger: Logger,
     file:   Option<File>
 }
 impl io::Write for DataOut {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         use std::char;
         
-        trace!(self.logger, "write: {}", {
+        println!("write: {}", {
             let s: String = buf.iter()
                 .map(|&b| char::from_u32(b as u32 + 0x2800).unwrap())
                 .collect();
@@ -122,16 +119,14 @@ impl IoMachine {
     
     /// storage: Some(path) to store the document
     ///          None to throw it away.
-    pub fn new(logger: Logger, storage: Option<&Path>) -> IoMachine {
+    pub fn new(storage: Option<&Path>) -> IoMachine {
         use lz4::liblz4::{BlockMode, BlockSize};
         
         let file = storage.map(|p| File::open(p).unwrap());
         let mut data_out = DataOut {
-            logger: logger.clone(),
             file:   file
         };
         
-        trace!(logger, "creating encoder");
         let encoder = lz4::EncoderBuilder::new()
         .block_mode(BlockMode::Linked)
         .block_size(BlockSize::Max1MB)
@@ -144,7 +139,6 @@ impl IoMachine {
             nodes:      HashMap::new(),
             stamper:    RefCell::new(IncrementalStamper::init_random()),
             typelist:   vec![],
-            logger:     logger,
             active:     None
         }
     }
@@ -154,7 +148,6 @@ impl IoMachine {
         let mut queue = vec![node];
         
         while let Some(n) = queue.pop() {
-            trace!(self.logger, "insert_node: {:?}", n);
             // add childs to quue
             n.childs(&mut queue);
             
@@ -174,9 +167,9 @@ impl IoMachine {
         use blocks::RootNode;
         use std::io::Read;
 
-        debug!(self.logger, "load yarn: {:?}", yarn);
+        println!("load yarn: {:?}", yarn);
         
-        let mut env = Environment::new(self.logger.new(o!("env" => "root")));
+        let mut env = Environment::new();
         prepare_environment(&mut env);
 
         let mut data = String::new();
@@ -186,19 +179,18 @@ impl IoMachine {
         // the lifetime of io.clone() ensures no borrow exists when the function
         // returns from this call
         let root = RootNode::parse(IoRef::new(self), &env, &data);
-        debug!(self.logger, "parsing complete");
+        println!("parsing complete");
         // thus this call can not fail
         self.insert_node(root.clone());
         
         self.active = Some((root, env));
     }
     
-    pub fn layout(&self) -> Option<LayoutNode> {
+    pub fn layout(&self, s: &mut TokenStream) {
         match self.active {
             Some((ref root, ref env)) =>
-                Some(root.layout(env)),
-            None =>
-                None
+                root.layout(env, s),
+            None => {}
         }
     }
 }

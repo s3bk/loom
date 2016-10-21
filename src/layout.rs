@@ -116,77 +116,26 @@ enum StreamItem {
     BranchExit(usize)
 }
 
-#[derive(Clone, Debug)]
-pub enum LayoutNode {
-    Leaf(TokenStream),
-    Nodes(Vec<LayoutNode>)
-}
-impl Into<LayoutNode> for (LayoutNode, LayoutNode) {
-    fn into(self) -> LayoutNode {
-        LayoutNode::Nodes(vec![self.0, self.1])
-    }
-}
-impl Into<LayoutNode> for TokenStream {
-    fn into(self) -> LayoutNode {
-        LayoutNode::Leaf(self)
-    }
-}
-impl FromIterator<LayoutNode> for LayoutNode {
-    fn from_iter<T>(iter: T) -> LayoutNode where T: IntoIterator<Item=LayoutNode>{
-        LayoutNode::Nodes(Vec::<LayoutNode>::from_iter(iter))
-    }
-}
-impl LayoutNode {
-    fn size(&self) -> usize {
-        match self {
-            &LayoutNode::Leaf(ref stream) => stream.len(),
-            &LayoutNode::Nodes(ref vec) => vec.iter().map(|n| n.size()).sum()
-        }
-    }
-}
-
-/// append the node to the 
-impl Into<TokenStream> for LayoutNode {
-    fn into(self) -> TokenStream {
-        let mut s = TokenStream {
-            s: Vec::with_capacity(self.size())
-        };
-        s.append_node(&self);
-        s
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct TokenStream {
-    s: Vec<StreamItem>,
+    buf: Vec<StreamItem>
 }
 impl TokenStream {
-    fn append_node(&mut self, node: &LayoutNode) {
-        match node {
-            &LayoutNode::Leaf(ref stream) => {
-                self.extend(stream);
-            },
-            &LayoutNode::Nodes(ref vec) => {
-                for n in vec.iter() {
-                    self.append_node(n);
-                }
-            }
-        }
-    }
 
     pub fn new() -> TokenStream {
-        TokenStream { s: vec![] }
+        TokenStream { buf: vec![] }
     }
     pub fn len(&self) -> usize {
-        self.s.len()
+        self.buf.len()
     }
     
     fn add(&mut self, i: StreamItem) {
-        self.s.push(i)
+        self.buf.push(i);
     }
     
     pub fn extend(&mut self, t: &TokenStream) -> &mut TokenStream {
-        self.s.extend_from_slice(&t.s);
+        self.buf.extend_from_slice(&t.buf);
         self
     }
     
@@ -206,14 +155,17 @@ impl TokenStream {
     }
     
     pub fn newline(&mut self) -> &mut TokenStream {
-        self.add(StreamItem::Linebreak);
+        match self.buf.last() {
+            Some(&StreamItem::Linebreak) => {},
+            _ => self.add(StreamItem::Linebreak)
+        }
         self
     }
     
     pub fn branch(&mut self, a: &TokenStream, b: &TokenStream) -> &mut TokenStream {
-        self.add(StreamItem::BranchEntry(b.s.len() + 1));
+        self.add(StreamItem::BranchEntry(b.buf.len() + 1));
         self.extend(b);
-        self.add(StreamItem::BranchExit(a.s.len()));
+        self.add(StreamItem::BranchExit(a.buf.len()));
         self.extend(a);
         self
     }
@@ -272,7 +224,7 @@ struct LineContext {
 impl ParagraphLayout {
     pub fn new(s: TokenStream, width: f32) -> ParagraphLayout {
         ParagraphLayout {
-            items: s.s,
+            items: s.buf,
             width: width
         }
     }

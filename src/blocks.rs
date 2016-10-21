@@ -3,7 +3,7 @@ use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 use environment::Environment;
 use document::*;
-use layout::{TokenStream, Flex, LayoutNode};
+use layout::{TokenStream, Flex};
 use typeset::Font;
 use parser;
 use io::IoRef;
@@ -12,16 +12,16 @@ pub struct LeafBuilder<'a> {
     env:    &'a Environment<'a>,
     space:  Arc<Flex>,
     font:   Arc<Font>,
-    stream: TokenStream
+    stream: &'a mut TokenStream
 }
 impl<'a> LeafBuilder<'a> {
-    pub fn new(env: &'a Environment) -> LeafBuilder<'a> {
+    pub fn new(env: &'a Environment, s: &'a mut TokenStream) -> LeafBuilder<'a> {
         let font = env.default_font().unwrap().clone();
         LeafBuilder {
             env:    env,
             space:  font.space().flex(2.0),
             font:   font,
-            stream: TokenStream::new()
+            stream: s
         }
     }
     pub fn newline(mut self) -> LeafBuilder<'a> {
@@ -48,47 +48,37 @@ impl<'a> LeafBuilder<'a> {
         self.env.use_token(&mut self.stream, name);
         self
     }
-    pub fn build(self) -> LayoutNode {
-        self.stream.into()
-    }
 }
 
 macro_rules! leaf {
-    ($env:ident, $($rest:tt)*) => (
-        leaf_complete!(LeafBuilder::new($env), $($rest)*)
+    ($env:ident, $stream:ident << $($rest:tt)*) => (
+        leaf_complete!(LeafBuilder::new($env, $stream), $($rest)*)
     )
 }
 macro_rules! leaf_complete {
-    ($builder:expr, newline) => (
-        $builder.newline().build()
+    ($builder:expr) => (
+        {$builder;}
     );
-    ($builder:expr, newline, $($rest:tt)*) => (
-        leaf_complete!($builder.newline(), $($rest)*)
+    ($builder:expr, newline $($rest:tt)*) => (
+        leaf_complete!($builder.newline() $($rest)*)
     );
-    
-    ($builder:expr, ~) => (
-        $builder.nbspace().build()
+    ($builder:expr, ~ $($rest:tt)*) => (
+        leaf_complete!($builder.nbspace() $($rest)*)
     );
-    ($builder:expr, ~, $($rest:tt)*) => (
-        leaf_complete!($builder.nbspace(), $($rest)*)
+    ($builder:expr, _ $($rest:tt)*) => (
+        leaf_complete!($builder.space() $($rest)*)
     );
-    
-    ($builder:expr, _) => (
-        $builder.space().build()
+    ($builder:expr, / $name:ident $($rest:tt)*) => (
+        leaf_complete!($builder.token(stringify!($name)) $($rest)*)
     );
-    ($builder:expr, _, $($rest:tt)*) => (
-        leaf_complete!($builder.space(), $($rest)*)
+    ($builder:expr, - $x:expr) => (
+        {$builder.word_hyphenated($x);}
     );
-    
-    ($builder:expr, / $name:expr) => (
-        $builder.token(stringify!($name)).build()
+    ($builder:expr, - $x:expr, $($rest:tt)*) => (
+        leaf_complete!($builder.word_hyphenated($x), $($rest)*)
     );
-    ($builder:expr, / $name:expr, $($rest:tt)*) => (
-        leaf_complete!($builder.token(stringify!($name)), $($rest)*)
-    );
-    
     ($builder:expr, $x:expr) => (
-        $builder.word($x).build()
+        {$builder.word($x);}
     );
     ($builder:expr, $x:expr, $($rest:tt)*) => (
         leaf_complete!($builder.word($x), $($rest)*)
@@ -98,8 +88,8 @@ macro_rules! leaf_complete {
 #[derive(Debug)]
 struct ErrorBlock(String);
 impl Node for ErrorBlock {
-    fn layout(&self, env: &Environment) -> LayoutNode {
-        leaf!(env, "Error:", ~, &self.0, newline).into()
+    fn layout(&self, env: &Environment, s: &mut TokenStream) {
+        leaf!(env, s << "Error:", ~, &self.0, newline);
     }
 }
 
@@ -107,14 +97,13 @@ impl Node for ErrorBlock {
 /// process the block and return the resulting layoutgraph
 fn process_block(io: IoRef, env: &Environment, b: &parser::Block) -> P<Node> {
     // look up the name
-    debug!(env, "process_block name: {}", (b.name));
+    println!("process_block name: {}", b.name);
     P::from(Pattern::from_block(io, env, b)).into()
 }
 
 type DefinitionListP = P<NodeList<P<Definition>>>;
 fn defines(io: IoRef, env: &mut Environment, params: &[parser::Parameter]) -> DefinitionListP {
-    let log = env.logger(o!("NodeList" => "defines"));
-    P::new(NodeList::from(io.clone(), log,
+    P::new(NodeList::from(io.clone(),
         params.iter()
         .map(|p| {
             let d = P::new(Definition::from_param(io.clone(), env, p));
@@ -127,8 +116,7 @@ fn defines(io: IoRef, env: &mut Environment, params: &[parser::Parameter]) -> De
 fn process_body(io: IoRef, env: &Environment, childs: &[parser::Body]) -> P<NodeList<NodeP>> {
     use parser::Body;
     
-    let log = env.logger(o!("NodeList" => "process_body"));
-    P::new(NodeList::from(io.clone(), log,
+    P::new(NodeList::from(io.clone(),
         childs.iter()
         .map(|node| match node {
             &Body::Block(ref b) => process_block(io.clone(), env, b),
@@ -159,8 +147,8 @@ impl Word {
     }
 }
 impl Node for Word {
-    fn layout(&self, env: &Environment) -> LayoutNode {
-        LeafBuilder::new(env).word_hyphenated(&self.content).build()
+    fn layout(&self, env: &Environment, s: &mut TokenStream) {
+        leaf!(env, s << - &self.content);
     }
     fn space(&self) -> (bool, bool) {
         match self.role {
@@ -203,7 +191,6 @@ impl Leaf {
         Leaf {
             items: P::new(NodeList::from(
                 io,
-                env.logger(o!("NodeList" => "Leaf::from")),
                 items.iter().map(item_node)
             ))
         }
@@ -216,41 +203,36 @@ impl Node for Leaf {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.items.childs(out)
     }
-    fn layout(&self, env: &Environment) -> LayoutNode {
-        let mut nodes = vec![];
+    fn layout(&self, env: &Environment, s: &mut TokenStream) {
         let space = env.default_font().unwrap().space().flex(2.0);
         
         let mut it = self.items.iter().map(|i| (i, i.space())).peekable();
         while let Some(&(_, next_space)) = it.peek() {
             let (prev, prev_space) = it.next().unwrap();
             
-            nodes.push(prev.layout(env));
+            prev.layout(env, s);
             
             if prev_space.1 && next_space.0 {
-                let mut s = TokenStream::new();
                 s.space(space.clone());
-                nodes.push(s.into());
             }
         }
         if let Some((last, _)) = it.next() {
-            nodes.push(last.layout(env));
+            last.layout(env, s);
         }
-        
-        LayoutNode::Nodes(nodes)
+        s.newline();
     }
 }
 
 #[derive(Debug)]
 struct List {
-    items: NodeList<P<Cached<Leaf>>>
+    items: NodeList<P<Leaf>>
 }
 impl List {
     pub fn from(io: IoRef, env: &Environment, items: &[Vec<parser::Item>]) -> List {
         List {
             items: NodeList::from(
                 io.clone(),
-                env.logger(o!("NodeList" => "List::from")),
-                items.iter().map(|i| P::new(Cached::new(Leaf::from(io.clone(), env, i)))
+                items.iter().map(|i| P::new(Leaf::from(io.clone(), env, i))
             ))
         }
     }
@@ -259,16 +241,12 @@ impl Node for List {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.items.childs(out)
     }
-    fn layout(&self, env: &Environment) -> LayoutNode {
-        let mut nodes = vec![];
-        
+    fn layout(&self, env: &Environment, s: &mut TokenStream) {
         for item in self.items.iter() {
-            nodes.push(leaf!(env, "· "));
-            nodes.push(item.layout(env));
-            nodes.push(leaf!(env, newline));
+            leaf!(env, s << "· ");
+            item.layout(env, s);
+            s.newline();
         }
-        
-        LayoutNode::Nodes(nodes)
     }
 }
 
@@ -280,8 +258,14 @@ pub struct RootNode {
 impl RootNode {
     pub fn parse(io: IoRef, env: &Environment, s: &str) -> NodeP {
         use nom::IResult;
+        use nom::slug::wrap;
         
-        let input = parser::wrap(s, env.logger(vec![]));
+        #[cfg(release)]
+        let input = s;
+        
+        #[cfg(not(release))]
+        let input = wrap(s);
+        
         let b = match parser::block_body(input, 0) {
             IResult::Done(rem, b) => {
                 println!("{:?}", rem);
@@ -294,7 +278,7 @@ impl RootNode {
             _ => panic!()
         };
         
-        let mut env = env.extend(o!());
+        let mut env = env.extend();
         P::new(RootNode {
             defines:    defines(io.clone(), &mut env, &b.parameters),
             child:      process_body(io, &env, &b.childs).into()
@@ -306,13 +290,13 @@ impl Node for RootNode {
         out.push(self.defines.clone().into());
         out.push(self.child.clone());
     }
-    fn layout(&self, env: &Environment) -> LayoutNode {
-        trace!(env, "RootNode::layout()");
-        let mut env2 = env.extend(o!("env" => "RootNode::layout"));
+    fn layout(&self, env: &Environment, s: &mut TokenStream) {
+        println!("RootNode::layout()");
+        let mut env2 = env.extend();
         for d in self.defines.iter() {
             env2.add_target(d.name(), d.clone().into());
         }
-        self.child.layout(&env2)
+        self.child.layout(&env2, s)
     }
 }
 
@@ -331,9 +315,9 @@ impl Node for Definition {
     fn childs(&self, out: &mut Vec<NodeP>) {
         out.push(self.body.clone().into());
     }
-    fn layout(&self, env: &Environment) -> LayoutNode {
-        trace!(env, "Definition::layout() {}", (self.name));
-        self.body.layout(env)
+    fn layout(&self, env: &Environment, s: &mut TokenStream) {
+        println!("Definition::layout() {}", self.name);
+        self.body.layout(env, s)
     }
     fn add_ref(&self, source: &Rc<Node>) {
         self.references.borrow_mut().push(Rc::downgrade(source));
@@ -342,10 +326,9 @@ impl Node for Definition {
 
 impl Definition {
     fn from_param(io: IoRef, env: &Environment, p: &parser::Parameter) -> Definition {
-        let mut env = env.extend(o!("define" => (p.name.to_string())));
         Definition {
             name:       p.name.to_string(),
-            body:       process_body(io, &env, &p.value.childs),
+            body:       process_body(io, env, &p.value.childs),
             references: RefCell::new(vec![])
         }
     }
@@ -370,18 +353,18 @@ pub struct Pattern {
     childs: P<NodeList<NodeP>>,
 }
 impl Macro for Pattern {
-    fn placeholder_layout(&self, env: &Environment, p: &Placeholder) -> LayoutNode {
+    fn placeholder_layout(&self, env: &Environment, s: &mut TokenStream, p: &Placeholder) {
         match p {
-            &Placeholder::Body          => self.childs.layout(env),
-            &Placeholder::Arguments     => self.args.layout(env),
+            &Placeholder::Body          => self.childs.layout(env, s),
+            &Placeholder::Arguments     => self.args.layout(env, s),
             &Placeholder::Argument(n)   => match self.args.get(n) {
-                Some(arg) => arg.layout(env),
-                None => leaf!(env,
+                Some(arg) => arg.layout(env, s),
+                None => leaf!(env, s <<
                             "Argument", _, &format!("{}", n), _, "is", _,
                             "out", _, "of", _, "bounds", ".", newline)
             },
             &Placeholder::Unknown(ref name)  =>
-                leaf!(env, "Name", _, &name, _, "unknown", ".", newline)
+                leaf!(env, s << "Name", _, &name, _, "unknown", ".", newline)
         }
     }
 }
@@ -389,7 +372,7 @@ impl Pattern {
     fn from_block(io: IoRef, env: &Environment, block: &parser::Block) -> NodeP {
         use nom::IResult;
         
-        let mut inner_env = env.extend(o!("pattern" => (block.name.to_string())));
+        let mut inner_env = env.extend();
         
         let ref body = block.body;
         let mut p = P::new(Pattern {
@@ -398,7 +381,6 @@ impl Pattern {
             childs:     process_body(io.clone(), &inner_env, &body.childs),
             target:     Ref::new(block.name.to_string())
         });
-        trace!(inner_env, "resolving");
         {
             let mut mi: &mut Pattern = p.get_mut().unwrap();
             mi.target.resolve(env);
@@ -412,18 +394,18 @@ impl Node for Pattern {
         out.push(self.args.clone().into());
         out.push(self.defines.clone().into());
     }
-    fn layout(&self, env: &Environment) -> LayoutNode {
+    fn layout(&self, env: &Environment, s: &mut TokenStream) {
         // the Environment will solve it.
         if let Some(ref target) = self.target.get() {
-            let mut env2 = env.extend(o!("env" => "Definition"));
+            let mut env2 = env.extend();
             for d in self.defines.iter() {
                 env2.add_target(d.name(), d.clone().into());
             }
             env2.set_macro(self);
-            target.layout(&env2)
+            target.layout(&env2, s)
         } else {
-            leaf!(env, "Unresolved", _, "macro", _, "'", self.target.name(),
-                "'", /hfill, newline)
+            leaf!(env, s << "Unresolved", _, "macro", _, "'", self.target.name(),
+                "'", /hfill, newline);
         }
     }
 }

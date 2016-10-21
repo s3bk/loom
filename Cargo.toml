@@ -14,7 +14,6 @@ rustc-serialize = "*"
 lz4 = "*"
 broadcast = "*"
 mio = "*"
-slog-term = "*"
 clap = {version="*", features=["yaml"]}
 
 [dependencies.image]
@@ -23,23 +22,22 @@ features = ["png_codec"]
 version = "0.10.3"
 
 [dependencies.nom]
-git = "https://github.com/Geal/nom.git"
+#git = "https://github.com/Geal/nom.git"
 #git = "https://github.com/s3bk/nom.git"
-#path = "../nom"
-#default_features = false
-#features = []
+path = "../nom"
+default_features = false
+features = ["slug"]
 #version = "0.4"
 
 [dependencies.woot]
-git = "https://github.com/s3bk/woot.git"
-#path = "../woot"
-
-[dependencies.slog]
-version = "*"
-#features = ["max_level_trace"]
+#git = "https://github.com/s3bk/woot.git"
+path = "../woot"
 
 [[bin]]
 name = "render_image"
 
 [[bin]]
 name = "hyphen_import"
+
+[[bin]]
+name = "profile_parser"

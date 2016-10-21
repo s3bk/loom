@@ -7,7 +7,6 @@ use document::{Macro, NodeP};
 use hyphenation::Hyphenator;
 use document;
 use parser;
-use slog::{self, Logger};
 
 type Command = Fn(&mut Environment, &[String]) -> bool;
 type Handler = Fn(&mut Environment, &parser::Block) -> document::NodeP;
@@ -35,7 +34,6 @@ pub struct Environment<'a> {
     paths:          Vec<PathBuf>,
     active_macro:   Option<&'a Macro>,
     targets:        HashMap<String, NodeP>,
-    logger:         Logger
 }
 
 impl<'a> Environment<'a> {
@@ -99,7 +97,7 @@ impl<'a> Environment<'a> {
     
     pub fn set_hyphenator(&mut self, hyphenator: Hyphenator) {
         self.hyphenator = Some(hyphenator);
-        info!(self, "hyphenator set");
+        println!("hyphenator set");
     }
     pub fn hyphenator(&self) -> Option<&Hyphenator> {
         match self.hyphenator {
@@ -165,7 +163,7 @@ impl<'a> Environment<'a> {
     }
     
     pub fn add_target(&mut self, name: &str, target: NodeP) {
-        debug!(self, "target({}) = {:?}", name, target);
+        println!("add_target({}, ...)", name);
         self.targets.insert(name.to_owned(), target);
     }
     pub fn get_target(&self, name: &str) -> Option<&NodeP> {
@@ -177,14 +175,8 @@ impl<'a> Environment<'a> {
             }
         }
     }
-    pub fn logger(&self, values: Vec<slog::OwnedKeyValue>) -> Logger {
-        self.logger.new(values)
-    }
-    pub fn log(&self, record: &slog::Record) {
-        self.logger.log(record)
-    }
     
-    pub fn new(logger: Logger) -> Environment<'static> {
+    pub fn new() -> Environment<'static> {
         Environment {
             tokens:         HashMap::new(),
             //words:          HashMap::new(),
@@ -196,16 +188,15 @@ impl<'a> Environment<'a> {
             commands:       HashMap::new(),
             targets:        HashMap::new(),
             paths:          vec![],
-            active_macro:   None,
-            logger:         logger
+            active_macro:   None
         }
     }
     
-    pub fn extend(&self, values: Vec<slog::OwnedKeyValue>) -> Environment {
+    pub fn extend(&self) -> Environment {
         Environment {
             default_font:   self.default_font.clone(),
             parent:         Some(self),
-            ..              Environment::new(self.logger(values))
+            ..              Environment::new()
         }
     }
 }   
@@ -220,7 +211,7 @@ pub fn prepare_environment(e: &mut Environment) {
         Some(v) => v.into(),
         None => {
             let p = Path::new(file!()).parent().unwrap().join("doc");
-            info!(e, "LOOM_DATA not set. Using {:?} instead.", p);
+            println!("LOOM_DATA not set. Using {:?} instead.", p);
             p
         }
     };
