@@ -1,15 +1,17 @@
 /chapter
-    Chapter $args
+    Chapter $args \hfill
     
     $body
 
 /term
-    Term $args
+    Term $args \hfill
     
     $body
 
 /brief
     Brief $args
+    
+    $body
 
 :chapter Reference
     !hyphens en.map
@@ -17,13 +19,13 @@
     :term Yarn
 
         :brief
-            A yarn is a ordered sequence of Entities occuring in the .Document
+            A yarn is an ordered sequence of Entities occuring in the <Document>
         
-        In most cases the main .yarn is build from the textbody which is provided
+        In most cases the main <yarn> is build from the textbody which is provided
         by the user .
-        Another equally important .yarn could be a translation which is
-        expected to be positioned aside of the first .yarn .
-        The following list shows an non exhaustive list of other .yarns used :
+        Another equally important <yarn> could be a translation which is
+        expected to be positioned aside of the first <yarn> .
+        The following list shows an non exhaustive list of other <yarns> used :
         
           - Marginnotes
           - Comments
@@ -31,21 +33,21 @@
           - Figures
           - Footnotes
         
-        A .yarn may be either parsed from a file or generated while parsing other 
+        A <yarn> may be either parsed from a file or generated while parsing other 
         files . For example : You can choose between including your marginnotes in 
-        your main file ( in this case that file includes both .yarns ) and storing
-        them in a seperate file ( one .yarn per file ) .
+        your main file ( in this case that file includes both <yarns> ) and storing
+        them in a seperate file ( one <yarn> per file ) .
 
     :term Document
 
         :brief
-            The Document is the result of weaving all .Yarns and the .Woof 
+            The Document is the result of weaving all <Yarns> and the <Woof>
             together
 
     :term Woof
 
         :brief
-            The Woof holds all .Yarns together and gives the .Document a meaning
+            The Woof holds all <Yarns> together and gives the <Document> a meaning
 
     :term Metafile
         
@@ -53,8 +55,8 @@
         .document .
         Imagine the metafile as the specification and documentation of 
         your Loom .
-        It contains the .commands including translation and description .
-        The Metafile is also part of a .document , even it is never modified by 
+        It contains the <commands> including translation and description .
+        The Metafile is also part of a <document> , even it is never modified by 
         the user .
         It describes their relations , dependencies and meanings .
         It does not describe their representation .
@@ -68,11 +70,11 @@
         engine .
         
         Creating a .Metalayout for an existing .Metafile makes it possible to 
-        publish an existing .Document in another media .
+        publish an existing <Document> in another media .
         
         You could , for example start with a .Metalayout for a beamer presentation 
-        and later add a .Metalayout that produces a printable script . Another 
-        person could -- at the same time -- write a .Metalayout to use view the
+        and later add a <Metalayout> that produces a printable script . Another 
+        person could -- at the same time -- write a <Metalayout> to use view the
         content on a mobile device .
 
     :term Document Dictionary

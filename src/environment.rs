@@ -3,66 +3,66 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use typeset::{TypeEngine, Font, UnscaledFont};
 use layout::{TokenStream};
-use document::{Macro, NodeP};
+use document::{NodeP, P, NodeListP};
 use hyphenation::Hyphenator;
 use document;
 use parser;
 
-type Command = Fn(&mut Environment, &[String]) -> bool;
-type Handler = Fn(&mut Environment, &parser::Block) -> document::NodeP;
+type Command = Fn(Environment, &mut LocalEnv, &[String]) -> bool;
+type Handler = Fn(Environment, &parser::Block) -> document::NodeP;
 
 
 /// The Environment can only be changed within the Block::parse call
 /// Is is therefore allowed to cache results whithin methods that do not involve
 /// such calls.
-pub struct Environment<'a> {
-    commands:       HashMap<String, Box<Command>>,
-    tokens:         HashMap<String, TokenStream>,
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum Field {
+    Args,
+    Body
+}
+
+#[derive(Derivative)]
+#[derivative(Debug, Default="new")]
+pub struct LocalEnv {
+    #[derivative(Debug="ignore")]
     hyphenator:     Option<Hyphenator>,
     
     /// loaded fonts (without specified size)
     /// use with .get_font()
+    #[derivative(Debug="ignore")]
     fonts:          HashMap<String, Box<UnscaledFont>>,
     
     /// default font
+    #[derivative(Debug="ignore")]
     default_font:   Option<Arc<Font>>,
     
+    #[derivative(Debug="ignore")]
     font_engines:   Vec<Box<TypeEngine>>,
     
-    parent:         Option<&'a Environment<'a>>,
-    
     paths:          Vec<PathBuf>,
-    active_macro:   Option<&'a Macro>,
+    
+    #[derivative(Debug="ignore")]
+    commands:       HashMap<String, Box<Command>>,
+    tokens:         HashMap<String, TokenStream>,
     targets:        HashMap<String, NodeP>,
+    
+    fields:         HashMap<Field, NodeListP>
 }
 
-impl<'a> Environment<'a> {
+#[derive(Debug, Copy, Clone)]
+pub struct Environment<'a> {
+    parent:         Option<&'a Environment<'a>>,
+    locals:         &'a LocalEnv
+}
+
+impl LocalEnv {
     pub fn add_command(&mut self, name: &str, cmd: Box<Command>) {
         self.commands.insert(name.to_owned(), cmd);
-    }
-    pub fn get_command(&self, name: &str) -> Option<&Box<Command>> {
-        match self.commands.get(name) {
-            Some(c) => Some(c),
-            None => match self.parent {
-                Some(p) => p.get_command(name),
-                None => None
-            }
-        }
-    }
-    pub fn use_token(&self, s: &mut TokenStream, name: &str) -> bool {
-        if let Some(ts) = self.tokens.get(name) {
-            s.extend(ts);
-            true
-        } else if let Some(p) = self.parent {
-            p.use_token(s, name)
-        } else {
-            false
-        }
     }
     pub fn add_token(&mut self, name: &str, t: TokenStream) {
         self.tokens.insert(name.to_owned(), t);
     }
-    
     pub fn load_font(&mut self, path: &str, name: &str) -> bool {
         {
             self.font_engines.iter_mut()
@@ -73,9 +73,81 @@ impl<'a> Environment<'a> {
         .map(|f| self.fonts.insert(name.to_owned(), f))
         .is_some()
     }
+    pub fn set_default_font(&mut self, f: Arc<Font>) {
+        self.default_font = Some(f);
+    }
+    pub fn add_font_engine(&mut self, e: Box<TypeEngine>) {
+        self.font_engines.push(e)
+    }
+    pub fn set_hyphenator(&mut self, hyphenator: Hyphenator) {
+        self.hyphenator = Some(hyphenator);
+        println!("hyphenator set");
+    }
+    fn add_path(&mut self, path: PathBuf) {
+        self.paths.push(path);
+    }
+    pub fn add_target(&mut self, name: &str, target: NodeP) {
+        println!("add_target({}, ...)", name);
+        self.targets.insert(name.to_owned(), target);
+    }
+    pub fn set_field(&mut self, f: Field, n: NodeListP) {
+        self.fields.insert(f, n);
+    }
+    pub fn childs(&self, out: &mut Vec<NodeP>) {
+        for n in self.targets.values() {
+            out.push(n.clone());
+        }
+        for n in self.fields.values() {
+            out.push(n.clone().into());
+        }
+    }
+}
+impl<'a> Environment<'a> {
+    pub fn root(locals: &'a LocalEnv) -> Environment<'a> {
+        Environment {
+            parent: None,
+            locals: locals
+        }
+    }
+    
+    pub fn link(&'a self, locals: &'a LocalEnv) -> Environment<'a> {
+        Environment {
+            parent:         Some(self),
+            locals:         locals
+        }
+    }
+    
+    pub fn get_field(&self, f: Field) -> Option<NodeListP> {
+        match self.locals.fields.get(&f) {
+            Some(c) => Some(c.clone()),
+            None => match self.parent {
+                Some(p) => p.get_field(f),
+                None => None
+            }
+        }
+    }
+    
+    pub fn get_command(&self, name: &str) -> Option<&Box<Command>> {
+        match self.locals.commands.get(name) {
+            Some(c) => Some(c),
+            None => match self.parent {
+                Some(p) => p.get_command(name),
+                None => None
+            }
+        }
+    }
+    pub fn get_token(&self, name: &str) -> Option<&TokenStream> {
+        match self.locals.tokens.get(name) {
+            Some(c) => Some(c),
+            None => match self.parent {
+                Some(p) => p.get_token(name),
+                None => None
+            }
+        }
+    }
     
     pub fn get_font(&self, name: &str, size: f32) -> Option<Arc<Font>> {
-        if let Some(f) = self.fonts.get(name) {
+        if let Some(f) = self.locals.fonts.get(name) {
             Some(f.scale(size))
         } else if let Some(p) = self.parent {
             p.get_font(name, size)
@@ -84,23 +156,19 @@ impl<'a> Environment<'a> {
         }
     }
     
-    pub fn set_default_font(&mut self, f: Arc<Font>) {
-        self.default_font = Some(f);
-    }
     pub fn default_font(&self) -> Option<Arc<Font>> {
-        self.default_font.clone()
+        match self.locals.default_font {
+            Some(ref f) => Some(f.clone()),
+            None => match self.parent {
+                Some(p) => p.default_font(),
+                None => None
+            }
+        }
     }
     
-    pub fn add_font_engine(&mut self, e: Box<TypeEngine>) {
-        self.font_engines.push(e)
-    }
     
-    pub fn set_hyphenator(&mut self, hyphenator: Hyphenator) {
-        self.hyphenator = Some(hyphenator);
-        println!("hyphenator set");
-    }
     pub fn hyphenator(&self) -> Option<&Hyphenator> {
-        match self.hyphenator {
+        match self.locals.hyphenator {
             Some(ref h) => Some(h),
             None => match self.parent {
                 Some(p) => p.hyphenator(),
@@ -118,7 +186,6 @@ impl<'a> Environment<'a> {
                     points.iter()
                     .map(|hyphen| hyphen.apply(word))
                     .map(|(left, right)| {
-                        println!("{}-{}", left, right);
                         let mut s_branch = TokenStream::new();
                         s_branch.word(font.measure(&format!("{}-", left)))
                         .newline()
@@ -137,12 +204,9 @@ impl<'a> Environment<'a> {
         s.word(font.measure(word));
     }
     
-    fn add_path(&mut self, path: PathBuf) {
-        self.paths.push(path);
-    }
     
     fn search_file(&self, filename: &str) -> Option<PathBuf> {
-        for dir in self.paths.iter() {
+        for dir in self.locals.paths.iter() {
             let path = dir.join(filename);
             if path.is_file() {
                 return Some(path);
@@ -155,19 +219,8 @@ impl<'a> Environment<'a> {
         }
     }
     
-    pub fn set_macro(&mut self, m: &'a Macro) {
-        self.active_macro = Some(m);
-    }
-    pub fn get_macro(&self) -> Option<&Macro> {
-        self.active_macro
-    }
-    
-    pub fn add_target(&mut self, name: &str, target: NodeP) {
-        println!("add_target({}, ...)", name);
-        self.targets.insert(name.to_owned(), target);
-    }
     pub fn get_target(&self, name: &str) -> Option<&NodeP> {
-        match self.targets.get(name) {
+        match self.locals.targets.get(name) {
             Some(t) => Some(t),
             None => match self.parent {
                 Some(p) => p.get_target(name),
@@ -175,33 +228,9 @@ impl<'a> Environment<'a> {
             }
         }
     }
-    
-    pub fn new() -> Environment<'static> {
-        Environment {
-            tokens:         HashMap::new(),
-            //words:          HashMap::new(),
-            fonts:          HashMap::new(),
-            default_font:   None,
-            font_engines:   vec![],
-            hyphenator:     None,
-            parent:         None,
-            commands:       HashMap::new(),
-            targets:        HashMap::new(),
-            paths:          vec![],
-            active_macro:   None
-        }
-    }
-    
-    pub fn extend(&self) -> Environment {
-        Environment {
-            default_font:   self.default_font.clone(),
-            parent:         Some(self),
-            ..              Environment::new()
-        }
-    }
 }   
 
-pub fn prepare_environment(e: &mut Environment) {
+pub fn prepare_environment() -> LocalEnv {
     use layout::Flex;
     use typeset::RustTypeEngine;
     use std::env::var_os;
@@ -210,11 +239,13 @@ pub fn prepare_environment(e: &mut Environment) {
     let data_path: PathBuf = match var_os("LOOM_DATA") {
         Some(v) => v.into(),
         None => {
-            let p = Path::new(file!()).parent().unwrap().join("doc");
+            let p = Path::new("data").into();
             println!("LOOM_DATA not set. Using {:?} instead.", p);
             p
         }
     };
+    
+    let mut e = LocalEnv::new();
     
     e.add_path(data_path);
     
@@ -237,9 +268,11 @@ pub fn prepare_environment(e: &mut Environment) {
         hfill.nbspace(Arc::new(HFill{}));
         e.add_token("hfill", hfill);
     }
+    
+    e
 }
 
-fn cmd_hyphens(env: &mut Environment, args: &[String]) -> bool {
+fn cmd_hyphens(env: Environment, local: &mut LocalEnv, args: &[String]) -> bool {
     if args.len() != 1 {
         println!("expectec one argument");
         return false;
@@ -252,7 +285,7 @@ fn cmd_hyphens(env: &mut Environment, args: &[String]) -> bool {
         },
         Some(path) => {
             let h = Hyphenator::load(&path);
-            env.set_hyphenator(h);
+            local.set_hyphenator(h);
             true
         }
     }

@@ -8,10 +8,15 @@ macro_rules! alt_apply {
     ( alt!($i, apply!($t, $arg) $(| apply!($rest, $arg) )* ) )
 }
 
-#[cfg(release)]
+#[cfg(not(debug_assertions))]
+macro_rules! slug {
+    ($($t:tt)*) => ()
+}
+
+#[cfg(not(debug_assertions))]
 type Data<'a> = &'a str;
 
-#[cfg(not(release))]
+#[cfg(debug_assertions)]
 type Data<'a> = nom::slug::Slug<'a>;
 
 #[macro_export]
@@ -28,7 +33,26 @@ macro_rules! named (
   );
 );
 
-named!(space, recognize!(many1!(alt!(tag!(" ") | tag!("\t")))));
+#[inline(always)]
+fn space(input: Data) -> IResult<Data, Data> {
+    let mut n = 0;
+    for (m, c) in input.iter_elements().enumerate() {
+        match c {
+            ' ' | '\t' => continue,
+            _ => {
+                n = m;
+                break;
+            }
+        }
+    }
+    if n > 0 {
+        IResult::Done(input.slice(n ..), input.slice(.. n))
+    } else {
+        IResult::Error(error_position!(ErrorKind::Space, input))
+    }
+}
+//use nom::space;
+
 #[test]
 fn test_space() {
     slug!(
@@ -41,7 +65,17 @@ fn test_space() {
 
 named!(newline, tag!("\n"));
 
-named!(endline <()>, map!(tuple!(opt!(space), newline), |_| {()}));
+#[inline(always)]
+fn endline(input: Data) -> IResult<Data, ()> {
+    for (m, c) in input.iter_elements().enumerate() {
+        match c {
+            ' ' | '\t' => continue,
+            '\n' => return IResult::Done(input.slice(m + 1 ..), ()),
+            _ => break
+        }
+    }
+    IResult::Error(error_position!(ErrorKind::Tag, input))
+}
 #[test]
 fn test_endline() {
     slug!(
@@ -80,7 +114,8 @@ pub enum Item<'a> {
     Reference(&'a str),
     Symbol(&'a str),
     Punctuation(&'a str),
-    Placeholder(Var<'a>)
+    Placeholder(Var<'a>),
+    Token(&'a str)
 }
 
 #[inline(always)]
@@ -93,6 +128,25 @@ fn is_letter(c: char) -> bool {
     }
 }
 
+#[inline(always)]
+fn is_punctuation(c: char) -> bool {
+    match c {
+        '.' | ',' | ':' | '!' | '?' | ';' => true,
+        c if c <= '\u{7E}' => false,
+        _ => c.is_punctuation()
+    }
+}
+
+#[inline(always)]
+fn is_symbol(c: char) -> bool {
+    match c {
+        '+' | '-' | '#' | '*' | '/' | '%' | '&' => true,
+        c if c <= '\u{7E}' => false,
+        _ => c.is_symbol()
+    }
+}
+
+#[inline(always)]
 fn letter_sequence(input: Data) -> IResult<Data, Data> {
     //use unicode_segmentation::UnicodeSegmentation;
     //let gi = UnicodeSegmentation::grapheme_indices(input, true);
@@ -121,6 +175,7 @@ fn letter_sequence(input: Data) -> IResult<Data, Data> {
     
     IResult::Done(input.slice(input.input_len() ..), input)
 }
+
 #[test]
 fn test_letter_sequence() {
     slug!(
@@ -164,6 +219,7 @@ fn test_string() {
     );
 }
 
+#[inline(always)]
 fn test_chars<'a, F: Fn(char) -> bool>(input: Data<'a>, test: F) -> IResult<Data<'a>, Data<'a>>
 {
     let mut codepoints = input.iter_elements();
@@ -202,7 +258,7 @@ named!(item_reference <Item>,
     )
 );
 named!(item_symbol <Item>,
-    map!(apply!(test_chars, |c: char| c.is_symbol() ),
+    map!(apply!(test_chars, |c: char| is_symbol(c) ),
         |s: Data<'a>| { Item::Symbol(s.into()) }
     )
 );
@@ -212,10 +268,16 @@ named!(item_placeholder <Item>,
     )
 );
 named!(item_punctuation <Item>,
-    map!(apply!(test_chars, |c: char| c.is_punctuation() ),
+    map!(apply!(test_chars, |c: char| is_punctuation(c) ),
         |s: Data<'a>| { Item::Punctuation(s.into()) }
     )
 );
+named!(item_token <Item>,
+    map!(preceded!(tag!("\\"), letter_sequence),
+        |s: Data<'a>| { Item::Token(s.into()) }
+    )
+);
+#[inline(always)]
 fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item<'a>> {
     match input.iter_elements().next() {
         Some(c) => match c {
@@ -224,6 +286,7 @@ fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item<'a>> {
             '.' | ',' | ':' | '!' | '?' => item_punctuation(input),
             '$' => item_placeholder(input),
             '<' => item_reference(input),
+            '\\' => item_token(input),
             _ => alt!(input, item_word | item_symbol | item_punctuation)
         },
         None => return IResult::Incomplete(nom::Needed::Size(1))
@@ -242,6 +305,7 @@ fn test_item() {
     );
 }
 
+#[inline(always)]
 fn leaf_indent(input: Data, expected_indent: usize) -> IResult<Data, Data> {
     recognize!(input,
         preceded!(
@@ -250,6 +314,7 @@ fn leaf_indent(input: Data, expected_indent: usize) -> IResult<Data, Data> {
         )
     )
 }
+#[inline(always)]
 fn leaf_seperator(input: Data, expected_indent: usize) -> IResult<Data, Data> {
     alt_complete!(input,
         apply!(leaf_indent, expected_indent) |
@@ -288,6 +353,11 @@ fn test_leaf() {
         leaf("        foo\n        bar \n", 2) => Done("", vec![
             Item::Word("foo"),
             Item::Word("bar")
+        ]);
+        leaf("\tx  y\n\tz\nq", 1) => Done("q", vec![
+            Item::Word("x"),
+            Item::Word("y"),
+            Item::Word("z")
         ]);
     );
 }
@@ -357,6 +427,7 @@ pub enum Body<'a> {
     Placeholder(Var<'a>)
 }
 
+#[inline(always)]
 fn block_leaf(input: Data, indent_level: usize) -> IResult<Data, Body> {
     map!(input,
         apply!(leaf, indent_level),
@@ -364,6 +435,7 @@ fn block_leaf(input: Data, indent_level: usize) -> IResult<Data, Body> {
     )
 }
 
+#[inline(always)]
 fn block_list(input: Data, indent_level: usize) -> IResult<Data, Body> {
     //println!("list_item at level {}", indent_level + 1);
     map!(input,
@@ -373,12 +445,16 @@ fn block_list(input: Data, indent_level: usize) -> IResult<Data, Body> {
         |l| Body::List(l)
     )
 }
+
+#[inline(always)]
 fn block_block(input: Data, indent_level: usize) -> IResult<Data, Body> {
     map!(input,
         apply!(block, indent_level),
         |b| Body::Block(b)
     )
 }
+
+#[inline(always)]
 fn block_placeholder(input: Data, indent_level: usize) -> IResult<Data, Body> {
     do_parse!(input,
             count!(indent_any, indent_level)
@@ -396,16 +472,25 @@ fn test_block_placeholder() {
     );
 }
 
+#[inline(always)]
+fn body(input: Data, indent_level: usize) -> IResult<Data, Body> {
+    alt_apply!(input, indent_level,
+        block_leaf | block_list | block_block | block_placeholder
+    )
+}
+
+#[inline(always)]
+fn childs(input: Data, indent_level: usize) -> IResult<Data, Vec<Body>> {
+    many0!(input, terminated!(
+            apply!(body, indent_level),
+            opt!(empty_lines)
+    ))
+}
 pub fn block_body(input: Data, indent_level: usize) -> IResult<Data, BlockBody> {
     do_parse!(input,
           commands: many0!(apply!(command, indent_level))
     >>  parameters: many0!(apply!(pattern, indent_level))
-    >>      childs: many0!(terminated!(
-                        alt_apply!(indent_level,
-                            block_leaf | block_list | block_block | block_placeholder
-                        ),
-                        opt!(empty_lines)
-                    ))
+    >>      childs: apply!(childs, indent_level)
     >>             (BlockBody {
                         commands:   commands,
                         parameters: parameters,
@@ -413,6 +498,8 @@ pub fn block_body(input: Data, indent_level: usize) -> IResult<Data, BlockBody> 
                     })
     )
 }
+
+#[inline(always)]
 pub fn command(input: Data, indent_level: usize) -> IResult<Data, Command> {
     do_parse!(input,
                 complete!(count!(indent_any, indent_level))
@@ -425,6 +512,8 @@ pub fn command(input: Data, indent_level: usize) -> IResult<Data, Command> {
     >>         (Command { name: name.into(), args: args })
     )
 }
+
+#[inline(always)]
 pub fn pattern(input: Data, indent_level: usize) -> IResult<Data, Parameter> {
     do_parse!(input,
               complete!(count!(indent_any, indent_level))
@@ -596,6 +685,53 @@ fn test_block_3() {
                 childs:     vec![
                     Body::Leaf(vec![
                         Item::Word("x"),
+                    ])
+                ]
+            }
+        });
+        block(":foo A\n    :bar\n    x\nx", 0) => Done("x", Block {
+            name:       "foo",
+            argument:   vec![Item::Word("A")],
+            body: BlockBody {
+                commands:   vec![],
+                parameters: vec![],
+                childs:     vec![
+                    Body::Block(Block {
+                        name:       "bar",
+                        argument:   vec![],
+                        body: BlockBody {
+                            commands:   vec![],
+                            parameters: vec![],
+                            childs:     vec![]
+                        }
+                    }),
+                    Body::Leaf(vec![
+                        Item::Word("x"),
+                    ])
+                ]
+            }
+        });
+        
+        block(":foo A\n    :bar\n\n    x  y\n\tz\nx", 0) => Done("x", Block {
+            name:       "foo",
+            argument:   vec![Item::Word("A")],
+            body: BlockBody {
+                commands:   vec![],
+                parameters: vec![],
+                childs:     vec![
+                    Body::Block(Block {
+                        name:       "bar",
+                        argument:   vec![],
+                        body: BlockBody {
+                            commands:   vec![],
+                            parameters: vec![],
+                            childs:     vec![]
+                        }
+                    }),
+                    Body::Leaf(vec![
+                        Item::Word("x"),
+                        Item::Word("y"),
+                        Item::Word("z"),
                     ])
                 ]
             }

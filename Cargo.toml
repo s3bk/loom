@@ -15,6 +15,7 @@ lz4 = "*"
 broadcast = "*"
 mio = "*"
 clap = {version="*", features=["yaml"]}
+derivative = "*"
 
 [dependencies.image]
 default-features = false
@@ -23,15 +24,15 @@ version = "0.10.3"
 
 [dependencies.nom]
 #git = "https://github.com/Geal/nom.git"
-#git = "https://github.com/s3bk/nom.git"
-path = "../nom"
+git = "https://github.com/s3bk/nom.git"
+#path = "../nom"
 default_features = false
 features = ["slug"]
 #version = "0.4"
 
 [dependencies.woot]
-#git = "https://github.com/s3bk/woot.git"
-path = "../woot"
+git = "https://github.com/s3bk/woot.git"
+#path = "../woot"
 
 [[bin]]
 name = "render_image"

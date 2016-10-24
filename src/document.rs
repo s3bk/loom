@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::fmt::Debug;
 use std::cell::RefCell;
 use layout::{TokenStream};
-use environment::Environment;
+use environment::{Environment, Field};
 use io::{Stamp, IoRef};
 use woot::{WString, WStringIter};
 
@@ -18,6 +18,8 @@ use woot::{WString, WStringIter};
 /// Since this is Rust, there will be a Trait requirement
 
 pub type NodeP = P<Node>;
+pub type NodeListP = P<NodeList<NodeP>>;
+
 pub trait Node: Debug {    
     /// 
     fn childs(&self, &mut Vec<NodeP>) {}
@@ -28,7 +30,7 @@ pub trait Node: Debug {
     fn modified(&self) {}
     
     /// compute layout graph
-    fn layout(&self, env: &Environment, s: &mut TokenStream);
+    fn layout(&self, env: Environment, s: &mut TokenStream);
 
     fn space(&self) -> (bool, bool) {
         (false, false)
@@ -47,7 +49,7 @@ impl<N: ?Sized> Node for P<N> where N: Node {
     fn modified(&self) {
         self.rc.modified()
     }
-    fn layout(&self, env: &Environment, s: &mut TokenStream) {
+    fn layout(&self, env: Environment, s: &mut TokenStream) {
         self.rc.layout(env, s)
     }
     fn space(&self) -> (bool, bool) {
@@ -70,7 +72,7 @@ impl<N> From<P<N>> for P<Node> where N: Node + Sized + 'static {
     }
 }
 
-impl<N> Deref for P<N> where N: Node {
+impl<N: ?Sized> Deref for P<N> where N: Node {
     type Target = N;
     
     fn deref(&self) -> &N {
@@ -98,29 +100,29 @@ pub enum Placeholder {
     Unknown(String)
 }
 impl Node for Placeholder {
-    fn layout(&self, env: &Environment, s: &mut TokenStream) {
+    fn layout(&self, env: Environment, s: &mut TokenStream) {
         use blocks::LeafBuilder;
         
-        match env.get_macro() {
-            Some(m) => m.placeholder_layout(env, s, self),
-            None => {
-                println!("no macro set");
-                let b = LeafBuilder::new(env, s);
-                match self {
-                    &Placeholder::Body => b.word("$body"),
-                    &Placeholder::Argument(n) => b.word(&format!("${}", n)),
-                    &Placeholder::Arguments => b.word("$args"),
-                    &Placeholder::Unknown(ref s) => b.word(&format!("${}", s)),
-                };
-            }
-        }
+        let n: Option<NodeP> = match self {
+            &Placeholder::Body => env.get_field(Field::Body).map(|n| n.into()),
+            &Placeholder::Argument(i) => env.get_field(Field::Args)
+                .and_then(|n| n.iter().nth(i).cloned()),
+            &Placeholder::Arguments => env.get_field(Field::Args).map(|n| n.into()),
+            _ => None
+        };
+        n.map(|n| n.layout(env, s))
+        .unwrap_or_else(|| {
+            println!("no macro set");
+            let b = LeafBuilder::new(env, s);
+            match self {
+                &Placeholder::Body => b.word("$body"),
+                &Placeholder::Argument(n) => b.word(&format!("${}", n)),
+                &Placeholder::Arguments => b.word("$args"),
+                &Placeholder::Unknown(ref s) => b.word(&format!("${}", s)),
+            };
+        });
     }
 }
-
-pub trait Macro: Node {
-    fn placeholder_layout(&self, env: &Environment, s: &mut TokenStream, p: &Placeholder);
-}
-
 
 #[derive(Debug)]
 pub struct Ref {
@@ -134,7 +136,7 @@ impl Ref {
             target: RefCell::new(None)
         }
     }
-    pub fn resolve(&mut self, env: &Environment) {
+    pub fn resolve(&mut self, env: Environment) {
         *self.target.borrow_mut() = env.get_target(&self.name).cloned();
     }
     pub fn get(&self) -> Option<NodeP> {
@@ -153,7 +155,7 @@ pub struct NodeList<T: Sized + Node + Clone> {
     ws: WString<T, Stamp>
 }
 impl<T> NodeList<T> where T: Node + Clone {
-    pub fn iter(&self) -> WStringIter<T, Stamp>{
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item=&'a T> {
         self.ws.iter()
     }
     pub fn from<I>(io: IoRef, iter: I) -> NodeList<T>
@@ -180,7 +182,7 @@ impl<T> Node for NodeList<T> where T: Node + Sized + Clone + Into<NodeP> {
             out.push(n.clone().into());
         }
     }
-    fn layout(&self, env: &Environment, s: &mut TokenStream) {
+    fn layout(&self, env: Environment, s: &mut TokenStream) {
         for n in self.iter() {
             n.layout(env, s);
         }

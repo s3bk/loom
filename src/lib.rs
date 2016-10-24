@@ -1,5 +1,8 @@
 #![feature(trace_macros)]
+#![feature(proc_macro)]
+#![feature(conservative_impl_trait)]
 
+#[macro_use] extern crate derivative;
 #[macro_use] extern crate nom;
 extern crate unicode_categories;
 extern crate rusttype;

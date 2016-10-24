@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 use woot::{WString, WStringIter, IncrementalStamper, Key};
 use document::{Node, NodeP};
 use layout::TokenStream;
-use environment::{Environment, prepare_environment};
+use environment::{Environment, prepare_environment, LocalEnv};
 
 pub use rmp_serialize::{Encoder, Decoder};
 
@@ -42,7 +42,7 @@ pub struct IoMachine {
     nodes:      HashMap<Stamp, NodeP>,
     stamper:    RefCell<IncrementalStamper<u32, u32>>,
     typelist:   Vec<NodeType>,
-    active:     Option<(NodeP, Environment<'static>)>
+    active:     Option<(NodeP, LocalEnv)>
 }
 pub struct IoCreate<'a> {
     stamp:  Stamp,
@@ -169,8 +169,7 @@ impl IoMachine {
 
         println!("load yarn: {:?}", yarn);
         
-        let mut env = Environment::new();
-        prepare_environment(&mut env);
+        let mut env = prepare_environment();
 
         let mut data = String::new();
         File::open(yarn).expect("could not open file")
@@ -178,7 +177,7 @@ impl IoMachine {
         
         // the lifetime of io.clone() ensures no borrow exists when the function
         // returns from this call
-        let root = RootNode::parse(IoRef::new(self), &env, &data);
+        let root = RootNode::parse(IoRef::new(self), Environment::root(&env), &data);
         println!("parsing complete");
         // thus this call can not fail
         self.insert_node(root.clone());
@@ -189,7 +188,7 @@ impl IoMachine {
     pub fn layout(&self, s: &mut TokenStream) {
         match self.active {
             Some((ref root, ref env)) =>
-                root.layout(env, s),
+                root.layout(Environment::root(env), s),
             None => {}
         }
     }
