@@ -4,13 +4,12 @@ use std::path::PathBuf;
 use typeset::{TypeEngine, Font, UnscaledFont};
 use layout::{TokenStream};
 use document::{NodeP, P, NodeListP};
+use io::IoRef;
 use hyphenation::Hyphenator;
 use document;
 use parser;
 
-type Command = Fn(Environment, &mut LocalEnv, &[String]) -> bool;
-type Handler = Fn(Environment, &parser::Block) -> document::NodeP;
-
+type Command = fn(IoRef, Environment, &mut LocalEnv, &[String]) -> bool;
 
 /// The Environment can only be changed within the Block::parse call
 /// Is is therefore allowed to cache results whithin methods that do not involve
@@ -43,11 +42,11 @@ pub struct LocalEnv {
     paths:          Vec<PathBuf>,
     
     #[derivative(Debug="ignore")]
-    commands:       HashMap<String, Box<Command>>,
+    commands:       HashMap<String, Command>,
     tokens:         HashMap<String, TokenStream>,
     targets:        HashMap<String, NodeP>,
     
-    fields:         HashMap<Field, NodeListP>
+    fields:         HashMap<Field, NodeListP>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -57,7 +56,7 @@ pub struct Environment<'a> {
 }
 
 impl LocalEnv {
-    pub fn add_command(&mut self, name: &str, cmd: Box<Command>) {
+    pub fn add_command(&mut self, name: &str, cmd: Command) {
         self.commands.insert(name.to_owned(), cmd);
     }
     pub fn add_token(&mut self, name: &str, t: TokenStream) {
@@ -87,12 +86,17 @@ impl LocalEnv {
         self.paths.push(path);
     }
     pub fn add_target(&mut self, name: &str, target: NodeP) {
-        println!("add_target({}, ...)", name);
+        println!("add_target({}, …)", name);
         self.targets.insert(name.to_owned(), target);
     }
     pub fn set_field(&mut self, f: Field, n: NodeListP) {
         self.fields.insert(f, n);
     }
+    /*
+    pub fn add_group(&mut self, opening: &str, closing: &str, node: NodeP) {
+        self.groups.insert((opening.to_owned(), closing.to_owned()), node)
+    }
+    */
     pub fn childs(&self, out: &mut Vec<NodeP>) {
         for n in self.targets.values() {
             out.push(n.clone());
@@ -100,6 +104,12 @@ impl LocalEnv {
         for n in self.fields.values() {
             out.push(n.clone().into());
         }
+    }
+    pub fn get_target(&self, name: &str) -> Option<&NodeP> {
+        self.targets.get(name)
+    }
+    pub fn targets<'a>(&'a self) -> impl Iterator<Item=(&'a String, &'a NodeP)> {
+        self.targets.iter()
     }
 }
 impl<'a> Environment<'a> {
@@ -117,6 +127,10 @@ impl<'a> Environment<'a> {
         }
     }
     
+    pub fn parent(&'a self) -> Option<&Environment<'a>> {
+        self.parent
+    }
+    
     pub fn get_field(&self, f: Field) -> Option<NodeListP> {
         match self.locals.fields.get(&f) {
             Some(c) => Some(c.clone()),
@@ -127,7 +141,7 @@ impl<'a> Environment<'a> {
         }
     }
     
-    pub fn get_command(&self, name: &str) -> Option<&Box<Command>> {
+    pub fn get_command(&self, name: &str) -> Option<&Command> {
         match self.locals.commands.get(name) {
             Some(c) => Some(c),
             None => match self.parent {
@@ -166,6 +180,7 @@ impl<'a> Environment<'a> {
         }
     }
     
+    //resolve!(hyphenator -> self.locals.hyphenator )
     
     pub fn hyphenator(&self) -> Option<&Hyphenator> {
         match self.locals.hyphenator {
@@ -194,18 +209,14 @@ impl<'a> Environment<'a> {
                     })
                 );
                 return;
-            } else {
-                println!("word not found: {}", word);
             }
-        } else {
-            println!("no hyphenator found");
         }
         
         s.word(font.measure(word));
     }
     
     
-    fn search_file(&self, filename: &str) -> Option<PathBuf> {
+    pub fn search_file(&self, filename: &str) -> Option<PathBuf> {
         for dir in self.locals.paths.iter() {
             let path = dir.join(filename);
             if path.is_file() {
@@ -233,6 +244,7 @@ impl<'a> Environment<'a> {
 pub fn prepare_environment() -> LocalEnv {
     use layout::Flex;
     use typeset::RustTypeEngine;
+    use commands;
     use std::env::var_os;
     use std::path::Path;
     
@@ -240,7 +252,7 @@ pub fn prepare_environment() -> LocalEnv {
         Some(v) => v.into(),
         None => {
             let p = Path::new("data").into();
-            println!("LOOM_DATA not set. Using {:?} instead.", p);
+            println!("LOOM_DATA not set. Using '{:?}' instead.", p);
             p
         }
     };
@@ -252,7 +264,7 @@ pub fn prepare_environment() -> LocalEnv {
     e.add_font_engine(RustTypeEngine::new());
     e.set_default_font(RustTypeEngine::default().scale(20.0));
     
-    e.add_command("hyphens", Box::new(cmd_hyphens));
+    commands::register(&mut e);
     
     #[derive(Debug)]
     struct HFill {}
@@ -272,21 +284,3 @@ pub fn prepare_environment() -> LocalEnv {
     e
 }
 
-fn cmd_hyphens(env: Environment, local: &mut LocalEnv, args: &[String]) -> bool {
-    if args.len() != 1 {
-        println!("expectec one argument");
-        return false;
-    }
-    let ref filename = args[0];
-    match env.search_file(&filename) {
-        None => {
-            println!("hyphens file not found: {}", &filename as &str);
-            false
-        },
-        Some(path) => {
-            let h = Hyphenator::load(&path);
-            local.set_hyphenator(h);
-            true
-        }
-    }
-}

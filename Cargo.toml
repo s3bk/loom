@@ -4,9 +4,10 @@ version = "0.1.0"
 authors = ["Sebastian Köln <sebk@rynx.org>"]
 
 [dependencies]
-unicode_categories = "0.1.0"
-rusttype = "0.2.1"
-roman = "0.1.5"
+unicode_categories = "*"
+unicode-brackets = "*"
+rusttype = "*"
+roman = "*"
 fst = "*"
 rmp = "*"
 rmp-serialize = "*"
@@ -16,6 +17,9 @@ broadcast = "*"
 mio = "*"
 clap = {version="*", features=["yaml"]}
 derivative = "*"
+itertools = "*"
+futures = "*"
+curl = "*"
 
 [dependencies.image]
 default-features = false

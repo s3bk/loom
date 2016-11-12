@@ -2,6 +2,7 @@ use nom::{self, IResult, ErrorKind, digit, AsBytes, Compare, Slice, Offset,
 InputLength, IterIndices, Needed, CompareResult, FindToken};
 use std::iter::{Iterator};
 use unicode_categories::UnicodeCategories;
+use unicode_brackets::UnicodeBrackets;
 
 macro_rules! alt_apply {
     ($i:expr, $arg:expr, $t:ident $(| $rest:tt)*) =>
@@ -107,15 +108,21 @@ named!(var <Var>,
     )
 );
 
+#[derive(Debug, PartialEq)]
+pub struct Group<'a> {
+    pub opening: &'a str,
+    pub closing: &'a str,
+    pub content: Vec<Item<'a>>
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Item<'a> {
     Word(&'a str),
-    Reference(&'a str),
     Symbol(&'a str),
     Punctuation(&'a str),
     Placeholder(Var<'a>),
-    Token(&'a str)
+    Token(&'a str),
+    Group(Group<'a>)
 }
 
 #[inline(always)]
@@ -144,6 +151,24 @@ fn is_symbol(c: char) -> bool {
         c if c <= '\u{7E}' => false,
         _ => c.is_symbol()
     }
+}
+
+#[inline(always)]
+fn is_opening(c: char) -> bool {
+    match c {
+        '(' | '[' | '<' | '{' => true,
+        c if c <= '\u{7E}' => false,
+        _ => c.is_open_bracket()
+    }
+}
+
+#[inline(always)]
+fn is_closing(c: char) -> bool {
+    match c {
+        ')' | ']' | '>' | '}' => true,
+        c if c <= '\u{7E}' => false,
+        _ => c.is_close_bracket()
+    }   
 }
 
 #[inline(always)]
@@ -251,14 +276,8 @@ fn test_chars<'a, F: Fn(char) -> bool>(input: Data<'a>, test: F) -> IResult<Data
 named!(item_word <Item>,
     map!(letter_sequence, |s: Data<'a>| { Item::Word(s.into()) })
 );
-named!(item_reference <Item>,
-    map!(
-        delimited!(tag!("<"), letter_sequence, tag!(">")),
-        |s: Data<'a>| { Item::Reference(s.into()) }
-    )
-);
 named!(item_symbol <Item>,
-    map!(apply!(test_chars, |c: char| is_symbol(c) ),
+    map!(apply!(test_chars, is_symbol ),
         |s: Data<'a>| { Item::Symbol(s.into()) }
     )
 );
@@ -268,7 +287,7 @@ named!(item_placeholder <Item>,
     )
 );
 named!(item_punctuation <Item>,
-    map!(apply!(test_chars, |c: char| is_punctuation(c) ),
+    map!(apply!(test_chars, is_punctuation ),
         |s: Data<'a>| { Item::Punctuation(s.into()) }
     )
 );
@@ -277,7 +296,21 @@ named!(item_token <Item>,
         |s: Data<'a>| { Item::Token(s.into()) }
     )
 );
-#[inline(always)]
+named!(item_group <Item>,
+    do_parse!(
+        opening:    apply!(test_chars, is_opening)
+    >>              opt!(space)
+    >>  content:    separated_nonempty_list!(space, item)
+    >>              opt!(space)
+    >>  closing:    apply!(test_chars, is_closing)
+    >>             (Item::Group(Group{
+                        opening:    opening.into(),
+                        closing:    closing.into(),
+                        content:    content
+                    }))
+    )
+);
+
 fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item<'a>> {
     match input.iter_elements().next() {
         Some(c) => match c {
@@ -285,9 +318,9 @@ fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item<'a>> {
             'A' ... 'Z' => item_word(input),
             '.' | ',' | ':' | '!' | '?' => item_punctuation(input),
             '$' => item_placeholder(input),
-            '<' => item_reference(input),
             '\\' => item_token(input),
-            _ => alt!(input, item_word | item_symbol | item_punctuation)
+            '<' | '(' | '[' | '{' => item_group(input),
+            _ => alt!(input, item_word | item_symbol | item_punctuation | item_group)
         },
         None => return IResult::Incomplete(nom::Needed::Size(1))
     }
@@ -295,9 +328,29 @@ fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item<'a>> {
 #[test]
 fn test_item() {
     slug!(
-        item("<foo>\n") => Done("\n", Item::Reference("foo"));
-        item("<foo> baz") => Done(" baz", Item::Reference("foo"));
-        item("<baä>\n") => Done("\n", Item::Reference("baä"));
+        item("<foo>\n") => Done("\n", Item::Group(Group {
+            opening: "<",
+            content: vec![Item::Word("foo")],
+            closing: ">"
+        }));
+        item("<foo> baz") => Done(" baz", Item::Group(Group {
+            opening: "<",
+            content: vec![Item::Word("foo")],
+            closing: ">"
+        }));
+        item("<foo bar> baz") => Done(" baz", Item::Group(Group {
+            opening: "<",
+            content: vec![
+                Item::Word("foo"),
+                Item::Word("bar")
+            ],
+            closing: ">"
+        }));
+        item("<baä>\n") => Done("\n", Item::Group(Group {
+            opening: "<",
+            content: vec![Item::Word("baä")],
+            closing: ">"
+        }));
         item("foo baz") => Done(" baz", Item::Word("foo"));
         item("$body\n") => Done("\n", Item::Placeholder(Var::Name("body")));
         item("$3\n") => Done("\n", Item::Placeholder(Var::Number(3)));

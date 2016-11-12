@@ -1,0 +1,25 @@
+/Big
+    !fontsize 30
+    
+    $args
+
+/chapter
+    :Big Chapter $args \hfill
+    
+    $body \hfill
+
+/term
+    Term $args \hfill
+    
+    $body \hfill
+
+/brief
+    Brief $args
+    
+    $body \hfill
+
+
+!replace "->"→
+!replace "=>" ⇒
+!replace "<-" ←
+!replace "<=" ⇐

@@ -1,12 +1,7 @@
-use layout;
-use document;
-use environment::{Environment, prepare_environment};
-use layout::LayoutNode;
+use layout::{TokenStream, ParagraphLayout};
 use image::{GrayImage, Luma};
-use blocks::RootNode;
-use std::path::Path;
     
-pub fn render(node: &LayoutNode, width: f32) -> GrayImage {
+pub fn render(s: &TokenStream, width: f32) -> GrayImage {
     use std::time::SystemTime;
     
     fn m(label: &str, t0: SystemTime, t1: SystemTime) {
@@ -18,7 +13,7 @@ pub fn render(node: &LayoutNode, width: f32) -> GrayImage {
     let margin_v = 10.0;
     let margin_h = 10.0;
     
-    let lines = layout::ParagraphLayout::new(node.into(), width).run();
+    let lines = ParagraphLayout::new(s, width).run();
     let height: f32 = lines.iter().map(|l| l.height).sum();
     let mut image = GrayImage::from_pixel(
         (width + 2. * margin_h) as u32,

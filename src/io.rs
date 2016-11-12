@@ -63,16 +63,22 @@ pub struct IoRef<'a> {
     io:     &'a IoMachine
 }
 impl<'a> IoRef<'a> {
+    pub fn new(io: &IoMachine) -> IoRef {
+        IoRef {
+            io: io
+        }
+    }
     pub fn create(&self) -> IoCreate {
         IoCreate {
             stamp:  self.io.stamp(),
             io_ref: self.clone()
         }
     }
-    pub fn new(io: &IoMachine) -> IoRef {
-        IoRef{
-            io: io
-        }
+    pub fn get(&self, path: &str) -> Vec<u8> {
+        self.io.fetch(path)
+    }
+    pub fn get_path(&self, path: &Path) -> Vec<u8> {
+        self.io.fetch(path.to_str().expect("invalid path"))
     }
 }
 
@@ -164,7 +170,7 @@ impl IoMachine {
     }
 
     pub fn load_yarn(&mut self, yarn: &Path) {
-        use blocks::RootNode;
+        use blocks::Module;
         use std::io::Read;
 
         println!("load yarn: {:?}", yarn);
@@ -177,7 +183,7 @@ impl IoMachine {
         
         // the lifetime of io.clone() ensures no borrow exists when the function
         // returns from this call
-        let root = RootNode::parse(IoRef::new(self), Environment::root(&env), &data);
+        let root = Module::parse(IoRef::new(self), Environment::root(&env), &data);
         println!("parsing complete");
         // thus this call can not fail
         self.insert_node(root.clone());
@@ -191,5 +197,28 @@ impl IoMachine {
                 root.layout(Environment::root(env), s),
             None => {}
         }
+    }
+    
+    fn fetch(&self, path: &str) -> Vec<u8> {
+        let mut data = Vec::new();
+        if path.contains("://") {
+            use curl::easy::Easy;
+            
+            let mut easy = Easy::new();
+            easy.url(path).unwrap();
+            
+            let mut transfer = easy.transfer();
+            transfer.write_function(|part| {
+                data.extend_from_slice(part);
+                Ok(part.len())
+            }).unwrap();
+            transfer.perform().unwrap();
+        } else {
+            use std::io::Read;
+            
+            let mut f = File::open(path).expect("could not open file");
+            f.read_to_end(&mut data);
+        }
+        data
     }
 }

@@ -114,7 +114,7 @@ fn process_body(io: IoRef, env: Environment, childs: &[parser::Body]) -> P<NodeL
             &Body::Block(ref b) => process_block(io.clone(), env, b),
             &Body::Leaf(ref items) => P::new(Leaf::from(io.clone(), env, &items)).into(),
             &Body::List(ref items) => P::new(List::from(io.clone(), env, items)).into(),
-            &Body::Placeholder(ref v) => P::new(process_placeholder(v)).into()
+            &Body::Placeholder(ref v) => P::new(process_placeholder(env, v)).into()
         })
     ))
 }
@@ -150,7 +150,7 @@ impl Node for Word {
     }
 }
 
-fn process_placeholder(v: &parser::Var) -> Placeholder {
+fn process_placeholder(env: Environment, v: &parser::Var) -> Placeholder {
     use parser::Var;
     
     match v {
@@ -162,16 +162,16 @@ fn process_placeholder(v: &parser::Var) -> Placeholder {
         &Var::Number(n) => Placeholder::Argument(n)
     }
 }
-fn item_node(env: Environment, i: &parser::Item) -> NodeP {
+fn item_node(io: IoRef, env: Environment, i: &parser::Item) -> NodeP {
     use parser::Item;
     
     match i {
-        &Item::Word(ref s) |
-        &Item::Reference(ref s) => P::new(Word::new(s, Role::Word)).into(),
+        &Item::Word(ref s) => P::new(Word::new(s, Role::Word)).into(),
         &Item::Symbol(ref s) |
         &Item::Punctuation(ref s) => P::new(Word::new(s, Role::Punctuation)).into(),
-        &Item::Placeholder(ref v) => P::new(process_placeholder(v)).into(),
-        &Item::Token(ref s) => P::new(TokenNode::from(env, s)).into()
+        &Item::Placeholder(ref v) => P::new(process_placeholder(env, v)).into(),
+        &Item::Token(ref s) => P::new(TokenNode::from(env, s)).into(),
+        &Item::Group(ref g) => P::new(Group::from(io, env, g)).into()
     }
 }
 
@@ -202,46 +202,78 @@ impl Node for TokenNode {
     }
 }
 
+fn join_items<'a, I>(env: Environment, s: &mut TokenStream, mut items: I)
+    where I: Iterator<Item=&'a NodeP> + Sized
+{
+    let space = env.default_font().unwrap().space().flex(2.0);
+    
+    if let Some(mut prev) = items.next() {
+        while let Some(next) = items.next() {
+            prev.layout(env, s);
+            
+            if prev.space().1 && next.space().0 {
+                s.space(space.clone());
+            }
+            prev = next;
+        }
+        prev.layout(env, s);
+    }
+}
+
+#[derive(Debug)]
+pub struct Group {
+    content: NodeList<NodeP>,
+    opening: String,
+    closing: String,
+}
+impl Group {
+    pub fn from(io: IoRef, env: Environment, g: &parser::Group) -> Group {
+        Group {
+            content:    NodeList::from(io.clone(),
+                g.content.iter().map(|n| item_node(io.clone(), env, n))
+            ),
+            opening:    g.opening.to_owned(),
+            closing:    g.closing.to_owned()
+        }
+    }
+}
+impl Node for Group {
+    fn childs(&self, out: &mut Vec<NodeP>) {
+        self.content.childs(out)
+    }
+    fn layout(&self, env: Environment, s: &mut TokenStream) {
+        s.word(env.default_font().unwrap().measure(&self.opening));
+        join_items(env, s, self.content.iter());
+        s.word(env.default_font().unwrap().measure(&self.closing));
+    }
+}
+
 #[derive(Debug)]
 pub struct Leaf {
-    items: P<NodeList<NodeP>>
+    content: NodeList<NodeP>
 }
 impl Leaf {
     pub fn from(io: IoRef, env: Environment, items: &[parser::Item]) -> Leaf {
         Leaf {
-            items: P::new(NodeList::from(io,
-                items.iter().map(|n| item_node(env, n))
-            ))
+            content: NodeList::from(io.clone(),
+                items.iter().map(|n| item_node(io.clone(), env, n))
+            )
         }
     }
     pub fn get(&self, n: usize) -> Option<NodeP> {
-        self.items.iter().nth(n).cloned()
+        self.content.iter().nth(n).cloned()
     }
-    pub fn items(&self) -> NodeListP {
-        self.items.clone()
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item=&'a NodeP> {
+        self.content.iter()
     }
 }
 impl Node for Leaf {
     fn childs(&self, out: &mut Vec<NodeP>) {
-        self.items.childs(out)
+        self.content.childs(out)
     }
     fn layout(&self, env: Environment, s: &mut TokenStream) {
-        let space = env.default_font().unwrap().space().flex(2.0);
-        
-        let mut it = self.items.iter().map(|i| (i, i.space())).peekable();
-        while let Some(&(_, next_space)) = it.peek() {
-            let (prev, prev_space) = it.next().unwrap();
-            
-            prev.layout(env, s);
-            
-            if prev_space.1 && next_space.0 {
-                s.space(space.clone());
-            }
-        }
-        if let Some((last, _)) = it.next() {
-            last.layout(env, s);
-        }
-        s.newline();
+        join_items(env, s, self.content.iter());
+        leaf!(env, s << /hfill, newline);
     }
 }
 
@@ -267,7 +299,6 @@ impl Node for List {
         for item in self.items.iter() {
             leaf!(env, s << "· ");
             item.layout(env, s);
-            s.newline();
         }
     }
 }
@@ -275,24 +306,27 @@ impl Node for List {
 fn init_env(io: IoRef, env: Environment, body: &parser::BlockBody) -> LocalEnv {
     let mut local_env = LocalEnv::new();
     for cmd in body.commands.iter() {
+        println!("command: {}", cmd.name);
         match env.get_command(cmd.name) {
-            Some(c) => {c(env, &mut local_env, &cmd.args);},
+            Some(c) => {
+                c(io.clone(), env, &mut local_env, &cmd.args);
+            },
             None => println!("command '{}' not found", cmd.name)
         }
     }
     for p in body.parameters.iter() {
-        let d = P::new(Definition::from_param(io.clone(), env, p));
+        let d = P::new(Definition::from_param(io.clone(), env.link(&local_env), p));
         local_env.add_target(p.name, d.into());
     }
     local_env
 }
 
 #[derive(Debug)]
-pub struct RootNode {
+pub struct Module {
     env:        LocalEnv,
     body:       NodeListP
 }
-impl RootNode {
+impl Module {
     pub fn parse(io: IoRef, env: Environment, s: &str) -> NodeP {
         use nom::IResult;
         use nom::slug::wrap;
@@ -318,33 +352,38 @@ impl RootNode {
         let mut local_env = init_env(io.clone(), env, &body);
         let body = process_body(io, env.link(&local_env), &body.childs);
         
-        P::new(RootNode {
+        P::new(Module {
             env:    local_env,
             body:   body
         }).into()
     }
 }
-impl Node for RootNode {
+impl Node for Module {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.env.childs(out);
         self.body.childs(out);
     }
     fn layout(&self, env: Environment, s: &mut TokenStream) {
-        println!("RootNode::layout()");
+        println!("Module::layout()");
         self.body.layout(env.link(&self.env), s)
+    }
+    fn env(&self) -> Option<&LocalEnv> {
+        Some(&self.env)
     }
 }
 
 #[derive(Debug)]
 pub struct Definition {
     // the name of the macro
-    name:   String,
+    name:       String,
     
     // body of the macro declaration
-    body: P<NodeList<NodeP>>,
+    body:       P<NodeList<NodeP>>,
     
     // referencing macro invocations
-    references: RefCell<Vec<Weak<Node>>>
+    references: RefCell<Vec<Weak<Node>>>,
+    
+    env:        LocalEnv
 }
 impl Node for Definition {
     fn childs(&self, out: &mut Vec<NodeP>) {
@@ -352,7 +391,7 @@ impl Node for Definition {
     }
     fn layout(&self, env: Environment, s: &mut TokenStream) {
         println!("Definition::layout() {}", self.name);
-        self.body.layout(env, s)
+        self.body.layout(env.link(&self.env), s)
     }
     fn add_ref(&self, source: &Rc<Node>) {
         self.references.borrow_mut().push(Rc::downgrade(source));
@@ -361,10 +400,12 @@ impl Node for Definition {
 
 impl Definition {
     fn from_param(io: IoRef, env: Environment, p: &parser::Parameter) -> Definition {
+        let local_env = init_env(io.clone(), env, &p.value);
         Definition {
             name:       p.name.to_string(),
-            body:       process_body(io, env, &p.value.childs),
-            references: RefCell::new(vec![])
+            body:       process_body(io, env.link(&local_env), &p.value.childs),
+            references: RefCell::new(vec![]),
+            env:        local_env
         }
     }
     
@@ -385,8 +426,11 @@ impl Pattern {
     fn from_block(io: IoRef, env: Environment, block: &parser::Block) -> NodeP {
         
         let mut local_env = init_env(io.clone(), env, &block.body);
-        let args = P::new(Leaf::from(io.clone(), env, &block.argument));
-        local_env.set_field(Field::Args, args.items());
+        local_env.set_field(Field::Args, P::new(
+            NodeList::from(io.clone(),
+                block.argument.iter().map(|n| item_node(io.clone(), env, n))
+            )
+        ));
         
         let body = process_body(io, env.link(&local_env), &block.body.childs);
         local_env.set_field(Field::Body, body);
@@ -408,7 +452,6 @@ impl Node for Pattern {
         self.env.childs(out);
     }
     fn layout(&self, env: Environment, s: &mut TokenStream) {
-        // the Environment will solve it.
         if let Some(ref target) = self.target.get() {
             target.layout(env.link(&self.env), s)
         } else {

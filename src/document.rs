@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::fmt::Debug;
 use std::cell::RefCell;
 use layout::{TokenStream};
-use environment::{Environment, Field};
+use environment::{Environment, LocalEnv, Field};
 use io::{Stamp, IoRef};
 use woot::{WString, WStringIter};
 
@@ -23,7 +23,9 @@ pub type NodeListP = P<NodeList<NodeP>>;
 pub trait Node: Debug {    
     /// 
     fn childs(&self, &mut Vec<NodeP>) {}
-    
+    fn env(&self) -> Option<&LocalEnv> {
+        None
+    }
     //fn encode(&self, e: &mut Encoder);
     
     // one or more child nodes were modified
@@ -33,7 +35,7 @@ pub trait Node: Debug {
     fn layout(&self, env: Environment, s: &mut TokenStream);
 
     fn space(&self) -> (bool, bool) {
-        (false, false)
+        (true, true)
     }
     fn add_ref(&self, _: &Rc<Node>) {}
 }
@@ -103,13 +105,17 @@ impl Node for Placeholder {
     fn layout(&self, env: Environment, s: &mut TokenStream) {
         use blocks::LeafBuilder;
         
+        let outer_env = env.parent().unwrap();
+        
+        println!("{:?} ->", *self);
         let n: Option<NodeP> = match self {
-            &Placeholder::Body => env.get_field(Field::Body).map(|n| n.into()),
-            &Placeholder::Argument(i) => env.get_field(Field::Args)
+            &Placeholder::Body => outer_env.get_field(Field::Body).map(|n| n.into()),
+            &Placeholder::Argument(i) => outer_env.get_field(Field::Args)
                 .and_then(|n| n.iter().nth(i).cloned()),
-            &Placeholder::Arguments => env.get_field(Field::Args).map(|n| n.into()),
+            &Placeholder::Arguments => outer_env.get_field(Field::Args).map(|n| n.into()),
             _ => None
         };
+        println!("{:?}", n);
         n.map(|n| n.layout(env, s))
         .unwrap_or_else(|| {
             println!("no macro set");

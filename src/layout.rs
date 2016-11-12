@@ -6,7 +6,7 @@ use typeset::{MeasuredWord};
 
 // to flex or not to flex?
 #[allow(unused_variables)]
-pub trait Flex : Debug {
+pub trait Flex : Debug + Sync + Send {
     fn stretch(&self, line_width: f32) -> f32 { 0.0 }
     fn shrink(&self, line_width: f32) -> f32 { 0.0 }
     fn width(&self, line_width: f32) -> f32;
@@ -203,8 +203,8 @@ struct LineBreak {
 }
 type Entry = Option<LineBreak>;
 
-pub struct ParagraphLayout {
-    items:      Vec<StreamItem>,
+pub struct ParagraphLayout<'a> {
+    items:      &'a Vec<StreamItem>,
     width:      f32,
 }
 pub struct Line {
@@ -221,10 +221,10 @@ struct LineContext {
     branches:   u8 // number of branches so far (<= 64)
 }
 
-impl ParagraphLayout {
-    pub fn new(s: TokenStream, width: f32) -> ParagraphLayout {
+impl<'a> ParagraphLayout<'a> {
+    pub fn new(s: &'a TokenStream, width: f32) -> ParagraphLayout<'a> {
         ParagraphLayout {
-            items: s.buf,
+            items: &s.buf,
             width: width
         }
     }
@@ -237,7 +237,7 @@ impl ParagraphLayout {
         nodes[0] = Some(LineBreak::default());
         let mut last = 0;
         
-  'a:   for start in 0 .. limit {  
+        for start in 0 .. limit {  
             let node = nodes[start];
             match node {
                 Some(b) => {
@@ -256,13 +256,14 @@ impl ParagraphLayout {
                 None => {}
             }
         }
-        
+        /*
         for (n, node) in nodes.iter().take(limit).enumerate() {
             println!("{:4}  {:?}", n, node);
             println!("      {:?}", self.items[n]);
         }
         println!("{:4}  {:?}", limit, nodes[limit]);
-        
+        println!("last: {}", last);
+        */
         if last == 0 {
             return vec![];
         }
@@ -357,7 +358,7 @@ impl ParagraphLayout {
                 &StreamItem::BranchEntry(len) => {
                     use std::cmp;
                     // b 
-                    last = cmp::max(self.complete_line(
+                    let b_last = self.complete_line(
                         nodes,
                         LineContext {
                             pos:        n + 1,
@@ -365,7 +366,8 @@ impl ParagraphLayout {
                             branches:   c.branches + 1,
                             ..          c
                         }
-                    ), last);
+                    );
+                    last = cmp::max(last, b_last);
                     
                     // a follows here
                     c.pos += len;
