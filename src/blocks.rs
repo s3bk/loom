@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
-use environment::{Environment, LocalEnv, Field};
+use environment::{Environment, LocalEnv, Fields};
 use document::*;
 use layout::{TokenStream, Flex};
 use typeset::Font;
@@ -140,7 +140,12 @@ impl Word {
 }
 impl Node for Word {
     fn layout(&self, env: Environment, s: &mut TokenStream) {
-        leaf!(env, s << - &self.content);
+        let (left, right) = self.space();
+        let font = env.default_font().unwrap();
+        if s.maybe_space(left, right) {
+            s.space(font.space().flex(2.0));
+        }
+        env.hyphenate(s, &self.content, &font);
     }
     fn space(&self) -> (bool, bool) {
         match self.role {
@@ -202,24 +207,6 @@ impl Node for TokenNode {
     }
 }
 
-fn join_items<'a, I>(env: Environment, s: &mut TokenStream, mut items: I)
-    where I: Iterator<Item=&'a NodeP> + Sized
-{
-    let space = env.default_font().unwrap().space().flex(2.0);
-    
-    if let Some(mut prev) = items.next() {
-        while let Some(next) = items.next() {
-            prev.layout(env, s);
-            
-            if prev.space().1 && next.space().0 {
-                s.space(space.clone());
-            }
-            prev = next;
-        }
-        prev.layout(env, s);
-    }
-}
-
 #[derive(Debug)]
 pub struct Group {
     content: NodeList<NodeP>,
@@ -237,14 +224,26 @@ impl Group {
         }
     }
 }
+
 impl Node for Group {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.content.childs(out)
     }
     fn layout(&self, env: Environment, s: &mut TokenStream) {
-        s.word(env.default_font().unwrap().measure(&self.opening));
-        join_items(env, s, self.content.iter());
-        s.word(env.default_font().unwrap().measure(&self.closing));
+        let font = env.default_font().expect("no default font set");
+        let space = font.space();
+        
+        if s.maybe_space(true, false) {
+            s.space(space.clone());
+        }
+        s.word(font.measure(&self.opening));
+        
+        self.content.layout(env, s);
+        
+        if s.maybe_space(false, true) {
+            s.space(space.clone());
+        }
+        s.word(font.measure(&self.closing));
     }
 }
 
@@ -272,7 +271,7 @@ impl Node for Leaf {
         self.content.childs(out)
     }
     fn layout(&self, env: Environment, s: &mut TokenStream) {
-        join_items(env, s, self.content.iter());
+        self.content.layout(env, s);
         leaf!(env, s << /hfill, newline);
     }
 }
@@ -419,25 +418,30 @@ pub struct Pattern {
     // the macro itself
     target: Ref,
     
-    env: LocalEnv
+    env: LocalEnv,
+    
+    fields: Fields
 }
 
 impl Pattern {
     fn from_block(io: IoRef, env: Environment, block: &parser::Block) -> NodeP {
         
         let mut local_env = init_env(io.clone(), env, &block.body);
-        local_env.set_field(Field::Args, P::new(
+        let args = P::new(
             NodeList::from(io.clone(),
-                block.argument.iter().map(|n| item_node(io.clone(), env, n))
+                block.argument.iter().map(|n| item_node(io.clone(), env.link(&local_env), n))
             )
-        ));
+        );
         
         let body = process_body(io, env.link(&local_env), &block.body.childs);
-        local_env.set_field(Field::Body, body);
         
         let mut p = P::new(Pattern {
             target:     Ref::new(block.name.to_string()),
-            env:        local_env
+            env:        local_env,
+            fields:     Fields {
+                args:   args,
+                body:   body
+            }
         });
         
         { // don't ask
@@ -453,7 +457,8 @@ impl Node for Pattern {
     }
     fn layout(&self, env: Environment, s: &mut TokenStream) {
         if let Some(ref target) = self.target.get() {
-            target.layout(env.link(&self.env), s)
+            let field_link = env.link_fields(&self.fields);
+            target.layout(env.link(&self.env).with_fields(Some(&field_link)), s)
         } else {
             leaf!(env, s << "Unresolved", _, "macro", _, "'", self.target.name(),
                 "'", /hfill, newline);

@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::fmt::Debug;
 use std::cell::RefCell;
 use layout::{TokenStream};
-use environment::{Environment, LocalEnv, Field};
+use environment::{Environment, LocalEnv};
 use io::{Stamp, IoRef};
 use woot::{WString, WStringIter};
 
@@ -21,24 +21,35 @@ pub type NodeP = P<Node>;
 pub type NodeListP = P<NodeList<NodeP>>;
 
 pub trait Node: Debug {    
-    /// 
+    /// when building the graph, this method is called
+    /// to add child-nodes to the index
     fn childs(&self, &mut Vec<NodeP>) {}
+    
+    /// hack to get the LocalEnv
     fn env(&self) -> Option<&LocalEnv> {
         None
     }
+    
+    /// linearize the node
     //fn encode(&self, e: &mut Encoder);
     
-    // one or more child nodes were modified
+    /// one or more child nodes were modified
     fn modified(&self) {}
+    
     
     /// compute layout graph
     fn layout(&self, env: Environment, s: &mut TokenStream);
 
+    /// prefers a space to the (left, right) neightbour?
+    /// false wins over true.
     fn space(&self) -> (bool, bool) {
         (true, true)
     }
+    
+    /// ?
     fn add_ref(&self, _: &Rc<Node>) {}
 }
+
 #[derive(Debug)]
 pub struct P<N: ?Sized + Node> {
     rc: Rc<N>,
@@ -105,18 +116,15 @@ impl Node for Placeholder {
     fn layout(&self, env: Environment, s: &mut TokenStream) {
         use blocks::LeafBuilder;
         
-        let outer_env = env.parent().unwrap();
-        
-        println!("{:?} ->", *self);
+        let fields = env.fields().unwrap();
         let n: Option<NodeP> = match self {
-            &Placeholder::Body => outer_env.get_field(Field::Body).map(|n| n.into()),
-            &Placeholder::Argument(i) => outer_env.get_field(Field::Args)
+            &Placeholder::Body => Some(fields.body().into()),
+            &Placeholder::Argument(i) => Some(fields.args())
                 .and_then(|n| n.iter().nth(i).cloned()),
-            &Placeholder::Arguments => outer_env.get_field(Field::Args).map(|n| n.into()),
+            &Placeholder::Arguments => Some(fields.args().into()),
             _ => None
         };
-        println!("{:?}", n);
-        n.map(|n| n.layout(env, s))
+        n.map(|n| n.layout(env.with_fields(fields.parent()), s))
         .unwrap_or_else(|| {
             println!("no macro set");
             let b = LeafBuilder::new(env, s);
@@ -156,8 +164,10 @@ impl Ref {
     }
 }
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct NodeList<T: Sized + Node + Clone> {
+    #[derivative(Debug="ignore")]
     ws: WString<T, Stamp>
 }
 impl<T> NodeList<T> where T: Node + Clone {

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use typeset::{TypeEngine, Font, UnscaledFont};
 use layout::{TokenStream};
-use document::{NodeP, P, NodeListP};
+use document::{Node, NodeP, P, NodeListP};
 use io::IoRef;
 use hyphenation::Hyphenator;
 use document;
@@ -15,11 +15,8 @@ type Command = fn(IoRef, Environment, &mut LocalEnv, &[String]) -> bool;
 /// Is is therefore allowed to cache results whithin methods that do not involve
 /// such calls.
 
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub enum Field {
-    Args,
-    Body
-}
+/// The Environment needs to be split in layout-relevant parts where
+/// the Definition wins, and scope relevant parts where the Pattern wins
 
 #[derive(Derivative)]
 #[derivative(Debug, Default="new")]
@@ -44,15 +41,41 @@ pub struct LocalEnv {
     #[derivative(Debug="ignore")]
     commands:       HashMap<String, Command>,
     tokens:         HashMap<String, TokenStream>,
-    targets:        HashMap<String, NodeP>,
     
-    fields:         HashMap<Field, NodeListP>,
+    #[derivative(Debug="ignore")]
+    targets:        HashMap<String, NodeP>
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
+pub struct Fields {
+    pub args:   NodeListP,
+    pub body:   NodeListP
+}
+
+#[derive(Debug)]
+pub struct FieldLink<'a> {
+    local:  &'a Fields,
+    parent: Option<&'a FieldLink<'a>>
+}
+impl<'a> FieldLink<'a> {
+    pub fn parent(&self) -> Option<&'a FieldLink<'a>> {
+        self.parent
+    }
+    pub fn args(&self) -> NodeListP {
+        self.local.args.clone()
+    }
+    pub fn body(&self) -> NodeListP {
+        self.local.body.clone()
+    }
+}
+#[derive(Derivative)]
+#[derivative(Debug)]
+#[derive(Copy, Clone)]
 pub struct Environment<'a> {
+    #[derivative(Debug="ignore")]
     parent:         Option<&'a Environment<'a>>,
-    locals:         &'a LocalEnv
+    locals:         &'a LocalEnv,
+    fields:         Option<&'a FieldLink<'a>>
 }
 
 impl LocalEnv {
@@ -89,9 +112,6 @@ impl LocalEnv {
         println!("add_target({}, …)", name);
         self.targets.insert(name.to_owned(), target);
     }
-    pub fn set_field(&mut self, f: Field, n: NodeListP) {
-        self.fields.insert(f, n);
-    }
     /*
     pub fn add_group(&mut self, opening: &str, closing: &str, node: NodeP) {
         self.groups.insert((opening.to_owned(), closing.to_owned()), node)
@@ -100,9 +120,6 @@ impl LocalEnv {
     pub fn childs(&self, out: &mut Vec<NodeP>) {
         for n in self.targets.values() {
             out.push(n.clone());
-        }
-        for n in self.fields.values() {
-            out.push(n.clone().into());
         }
     }
     pub fn get_target(&self, name: &str) -> Option<&NodeP> {
@@ -116,14 +133,30 @@ impl<'a> Environment<'a> {
     pub fn root(locals: &'a LocalEnv) -> Environment<'a> {
         Environment {
             parent: None,
-            locals: locals
+            locals: locals,
+            fields: None
         }
     }
     
     pub fn link(&'a self, locals: &'a LocalEnv) -> Environment<'a> {
         Environment {
-            parent:         Some(self),
-            locals:         locals
+            parent: Some(self),
+            locals: locals,
+            fields: self.fields
+        }
+    }
+    
+    pub fn link_fields(&'a self, fields: &'a Fields) -> FieldLink<'a> {
+        FieldLink {
+            local:  fields,
+            parent: self.fields
+        }
+    }
+    
+    pub fn with_fields(self, fields: Option<&'a FieldLink<'a>>) -> Environment<'a> {
+        Environment {
+            fields: fields,
+            ..      self
         }
     }
     
@@ -131,14 +164,8 @@ impl<'a> Environment<'a> {
         self.parent
     }
     
-    pub fn get_field(&self, f: Field) -> Option<NodeListP> {
-        match self.locals.fields.get(&f) {
-            Some(c) => Some(c.clone()),
-            None => match self.parent {
-                Some(p) => p.get_field(f),
-                None => None
-            }
-        }
+    pub fn fields(&'a self) -> Option<&FieldLink<'a>> {
+        self.fields
     }
     
     pub fn get_command(&self, name: &str) -> Option<&Command> {
@@ -202,9 +229,9 @@ impl<'a> Environment<'a> {
                     .map(|hyphen| hyphen.apply(word))
                     .map(|(left, right)| {
                         let mut s_branch = TokenStream::new();
-                        s_branch.word(font.measure(&format!("{}-", left)))
-                        .newline()
-                        .word(font.measure(right));
+                        s_branch.word(font.measure(&format!("{}-", left)));
+                        s_branch.newline();
+                        s_branch.word(font.measure(right));
                         s_branch
                     })
                 );

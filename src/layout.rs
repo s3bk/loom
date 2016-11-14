@@ -119,13 +119,17 @@ enum StreamItem {
 
 #[derive(Clone, Debug)]
 pub struct TokenStream {
-    buf: Vec<StreamItem>
+    buf:    Vec<StreamItem>,
+    space:  bool
 }
 impl TokenStream {
-
     pub fn new() -> TokenStream {
-        TokenStream { buf: vec![] }
+        TokenStream {
+            buf:    vec![],
+            space:  false
+        }
     }
+    
     pub fn len(&self) -> usize {
         self.buf.len()
     }
@@ -134,40 +138,43 @@ impl TokenStream {
         self.buf.push(i);
     }
     
-    pub fn extend(&mut self, t: &TokenStream) -> &mut TokenStream {
+    pub fn extend(&mut self, t: &TokenStream) {
         self.buf.extend_from_slice(&t.buf);
-        self
     }
     
-    pub fn word(&mut self, w: Arc<MeasuredWord>) -> &mut TokenStream {
+    pub fn word(&mut self, w: Arc<MeasuredWord>) {
         self.add(StreamItem::Word(w));
-        self
     }
     
-    pub fn nbspace(&mut self, f: Arc<Flex>) -> &mut TokenStream {
+    pub fn maybe_space(&mut self, space_left: bool, space_right: bool) -> bool {
+        let s = self.space && space_left;
+        self.space = space_right;
+        s
+    }
+    
+    pub fn nbspace(&mut self, f: Arc<Flex>) {
         self.add(StreamItem::Space(f));
-        self
     }
     
-    pub fn space(&mut self, f: Arc<Flex>) -> &mut TokenStream {
+    pub fn space(&mut self, f: Arc<Flex>) {
         self.add(StreamItem::BreakingSpace(f));
-        self
     }
     
-    pub fn newline(&mut self) -> &mut TokenStream {
+    pub fn newline(&mut self) {
         match self.buf.last() {
             Some(&StreamItem::Linebreak) => {},
-            _ => self.add(StreamItem::Linebreak)
+            _ => {
+                self.add(StreamItem::Linebreak);
+                self.space = false;
+            }
         }
-        self
     }
     
-    pub fn branch(&mut self, a: &TokenStream, b: &TokenStream) -> &mut TokenStream {
+    pub fn branch(&mut self, a: &TokenStream, b: &TokenStream) {
         self.add(StreamItem::BranchEntry(b.buf.len() + 1));
         self.extend(b);
         self.add(StreamItem::BranchExit(a.buf.len()));
         self.extend(a);
-        self
     }
     
     pub fn branch_many<I>(&mut self, default: TokenStream, others: I)

@@ -18,6 +18,14 @@
     
     $body \hfill
 
+/ref
+    $body
+
+!group ref < >
+
+Command lookup is done in the PathEnv
+    
+Variable-lookup is done in the GraphEnv
 
 !replace "->"→
 !replace "=>" ⇒

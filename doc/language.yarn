@@ -1,4 +1,4 @@
-Language
+:chapter Language
     
     How does one describe things that are not known before ?
     
@@ -12,10 +12,10 @@ Language
     
     :part Unknowns
         Every language has to be build from parts that are not contained within it .
-        Mathematicans call these parts axioms .
+        Mathematicians call these parts axioms .
         They choice determines the power of the language and whether it is <well defined> .
         It is also possible that different choices define the same language .
-        A <well defined> language does not contradict iteself, and it also ensures
+        A <well defined> language does not contradict itself, and it also ensures
         that once something is known to be valid, it remains valid independent
         of yet unknown discoveries .
         
@@ -23,6 +23,10 @@ Language
             Unknowns are part of the Loom language by writing
             '!name' which then calls an build in command.
     
+        The <Unknowns> are built into Loom itself .
+        They contain the concept of a word , color and font .
+    
+
     :part Composition
         These parts are now connected by the language itself .
         A language that begins by describing the relations between the axioms it is
@@ -30,8 +34,28 @@ Language
         Now two blocks can be combined by the language ,
         extending the language itself .
         
+        - Term (Word, Number)
+        - Relation (space, --)
+        - Both '(' left: term, right: relation
+        
         :impl
-            C
+            The space between two words, the non-breaking space in between them
+            '~', combining dash '--' or punctuation ( '.', ',', '!', '?' )
+            composes the adjacent entities .
+            Paragraphs are also another type of composition .
+            
+            :deflist
+              - '_' separates two symbols without creating a space between them
+                or allowing a line-break .
+              - '__' separates two symbols without space, but allows a line-break .
+              - '~' separates two symbols creating a space but not without allowing
+                a line-break .
+              - ' ' separates two symbols with a space or line-break .
+              
+    
+    :part Groups
+        (), [], <>
+        
     
     :part Patterns
         In every language patterns will emerge .
@@ -39,5 +63,4 @@ Language
         And as these patterns originate from the language itself ,
         they fit perfectly into it .
     
-    The <Unknowns> are built into Loom itself .
-    They contain the concept of a word , color and font .
+    

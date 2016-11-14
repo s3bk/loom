@@ -1,6 +1,7 @@
 !load preamble
 !use preamble/*
 
+
 :chapter Reference
     !hyphens en.map
     
@@ -62,7 +63,7 @@
         
         You could , for example start with a <Metalayout> for a beamer presentation 
         and later add a <Metalayout> that produces a printable script . Another 
-        person could -- at the same time -- write a <Metalayout> to use view the
+        person could -- at the same time -- write a <Metalayout> to view the
         content on a mobile device .
 
     :term Document Dictionary
