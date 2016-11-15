@@ -7,6 +7,7 @@ use layout::{TokenStream};
 use environment::{Environment, LocalEnv};
 use io::{Stamp, IoRef};
 use woot::{WString, WStringIter};
+use inlinable_string::InlinableString;
 
 /// The Document is a Directed Acyclic Graph.
 ///
@@ -118,10 +119,10 @@ impl Node for Placeholder {
         
         let fields = env.fields().unwrap();
         let n: Option<NodeP> = match self {
-            &Placeholder::Body => Some(fields.body().into()),
-            &Placeholder::Argument(i) => Some(fields.args())
+            &Placeholder::Body => fields.body().map(|n| n.into()),
+            &Placeholder::Argument(i) => fields.args()
                 .and_then(|n| n.iter().nth(i).cloned()),
-            &Placeholder::Arguments => Some(fields.args().into()),
+            &Placeholder::Arguments => fields.args().map(|n| n.into()),
             _ => None
         };
         n.map(|n| n.layout(env.with_fields(fields.parent()), s))
@@ -164,6 +165,32 @@ impl Ref {
     }
 }
 
+#[derive(Debug)]
+pub struct GroupRef {
+    key: (InlinableString, InlinableString),
+    target: RefCell<Option<NodeP>>
+}
+impl GroupRef {
+    pub fn new(opening: &str, closing: &str) -> GroupRef {
+        GroupRef {
+            key:    (opening.into(), closing.into()),
+            target: RefCell::new(None)
+        }
+    }
+    pub fn resolve(&mut self, env: Environment) {
+        *self.target.borrow_mut() = env.get_group(&self.key).cloned();
+    }
+    pub fn get(&self) -> Option<NodeP> {
+        match *self.target.borrow() {
+            Some(ref n) => Some(n.clone()),
+            None => None
+        }
+    }
+    pub fn key(&self) -> &(InlinableString, InlinableString) {
+        &self.key
+    }
+}
+
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct NodeList<T: Sized + Node + Clone> {
@@ -190,6 +217,9 @@ impl<T> NodeList<T> where T: Node + Clone {
         NodeList {
             ws: ws
         }
+    }
+    pub fn size(&self) -> usize {
+        self.ws.len()
     }
 }
 impl<T> Node for NodeList<T> where T: Node + Sized + Clone + Into<NodeP> {

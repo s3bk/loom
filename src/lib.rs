@@ -1,6 +1,7 @@
 #![feature(trace_macros)]
 #![feature(proc_macro)]
 #![feature(conservative_impl_trait)]
+#![feature(box_syntax)]
 
 #[macro_use] extern crate derivative;
 #[macro_use] extern crate nom;
@@ -19,6 +20,8 @@ extern crate woot;
 extern crate mio;
 extern crate futures;
 extern crate curl;
+extern crate inlinable_string;
+extern crate ordermap;
 
 pub mod blocks;
 pub mod environment;

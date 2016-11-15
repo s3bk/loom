@@ -1,33 +1,36 @@
-/Big
+/Big $args
     !fontsize 30
-    
-    $args
+
+/big $args
+    !fontsize 25
+
+/small $args
+    !fontsize 16
+    $body
 
 /chapter
-    :Big Chapter $args \hfill
+    :Big Chapter \hfill $args
     
     $body \hfill
 
 /term
-    Term $args \hfill
+    :big Term $args
     
     $body \hfill
 
 /brief
-    Brief $args
+    :small
     
     $body \hfill
 
-/ref
-    $body
+/ref $args
 
-!group ref < >
 
 Command lookup is done in the PathEnv
     
 Variable-lookup is done in the GraphEnv
 
-!replace "->"→
-!replace "=>" ⇒
-!replace "<-" ←
-!replace "<=" ⇐
+!replace "->"
+!replace "=>" "⇒"
+!replace "<-" "←"
+!replace "<=" "⇐"

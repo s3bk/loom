@@ -237,6 +237,7 @@ fn test_string() {
     slug!(
         string("hallo ") => Done(" ", String::from("hallo"));
         string("hallo welt") => Done(" welt", String::from("hallo"));
+        string("<hallo >") => Done(" >", String::from("<hallo"));
         string(r"hallo\ welt") => Done(r" welt", String::from(r"hallo\"));
         string(r##""hallo welt""##) => Done("", String::from("hallo welt"));
         string(r##""hallo\ welt" .."##) => Done(" ..", String::from(r"hallo welt"));
@@ -564,6 +565,17 @@ pub fn command(input: Data, indent_level: usize) -> IResult<Data, Command> {
     >>          opt!(empty_lines)
     >>         (Command { name: name.into(), args: args })
     )
+}
+#[test]
+fn test_command() {
+    slug!(
+        command("!foo \"<bar\" \"baz>\"\n", 0) => Done("", Command {
+            name: "foo", args: vec![
+                "<bar".to_owned(),
+                "baz>".to_owned()
+            ]
+        });
+    );
 }
 
 #[inline(always)]

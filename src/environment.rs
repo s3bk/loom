@@ -8,8 +8,9 @@ use io::IoRef;
 use hyphenation::Hyphenator;
 use document;
 use parser;
-
-type Command = fn(IoRef, Environment, &mut LocalEnv, &[String]) -> bool;
+use commands::Command;
+use inlinable_string::InlinableString;
+use ordermap::OrderMap;
 
 /// The Environment can only be changed within the Block::parse call
 /// Is is therefore allowed to cache results whithin methods that do not involve
@@ -43,13 +44,25 @@ pub struct LocalEnv {
     tokens:         HashMap<String, TokenStream>,
     
     #[derivative(Debug="ignore")]
-    targets:        HashMap<String, NodeP>
+    targets:        HashMap<String, NodeP>,
+    
+    groups:         OrderMap<(InlinableString, InlinableString), NodeP>
 }
 
 #[derive(Debug)]
 pub struct Fields {
-    pub args:   NodeListP,
-    pub body:   NodeListP
+    pub args:   Option<NodeListP>,
+    pub body:   Option<NodeListP>
+}
+impl Fields {
+    pub fn childs(&self, out: &mut Vec<NodeP>) {
+        if let Some(ref args) = self.args {
+            out.push(args.clone().into());
+        }
+        if let Some(ref body) = self.body {
+            out.push(body.clone().into());
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -61,10 +74,10 @@ impl<'a> FieldLink<'a> {
     pub fn parent(&self) -> Option<&'a FieldLink<'a>> {
         self.parent
     }
-    pub fn args(&self) -> NodeListP {
+    pub fn args(&self) -> Option<NodeListP> {
         self.local.args.clone()
     }
-    pub fn body(&self) -> NodeListP {
+    pub fn body(&self) -> Option<NodeListP> {
         self.local.body.clone()
     }
 }
@@ -112,11 +125,9 @@ impl LocalEnv {
         println!("add_target({}, …)", name);
         self.targets.insert(name.to_owned(), target);
     }
-    /*
     pub fn add_group(&mut self, opening: &str, closing: &str, node: NodeP) {
-        self.groups.insert((opening.to_owned(), closing.to_owned()), node)
+        self.groups.insert((opening.into(), closing.into()), node);
     }
-    */
     pub fn childs(&self, out: &mut Vec<NodeP>) {
         for n in self.targets.values() {
             out.push(n.clone());
@@ -262,6 +273,16 @@ impl<'a> Environment<'a> {
             Some(t) => Some(t),
             None => match self.parent {
                 Some(p) => p.get_target(name),
+                None => None
+            }
+        }
+    }
+    
+    pub fn get_group(&self, q: &(InlinableString, InlinableString)) -> Option<&NodeP> {
+        match self.locals.groups.get(q) {
+            Some(t) => Some(t),
+            None => match self.parent {
+                Some(p) => p.get_group(q),
                 None => None
             }
         }

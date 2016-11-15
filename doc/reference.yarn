@@ -1,5 +1,6 @@
 !load preamble
 !use preamble/*
+!group "<" ref ">"
 
 
 :chapter Reference
@@ -8,7 +9,7 @@
     :term Yarn
 
         :brief
-            A yarn is an ordered sequence of Entities occurring in the <Document>
+            A yarn is an ordered sequence of Entities occurring in the <Document> .
         
         In most cases the main <yarn> is build from the textbody which is provided
         by the user .

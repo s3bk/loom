@@ -20,6 +20,8 @@ derivative = "*"
 itertools = "*"
 futures = "*"
 curl = "*"
+inlinable_string = "*"
+ordermap = { git="https://github.com/bluss/ordermap" }
 
 [dependencies.image]
 default-features = false
