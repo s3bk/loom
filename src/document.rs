@@ -4,10 +4,11 @@ use std::rc::Rc;
 use std::fmt::Debug;
 use std::cell::RefCell;
 use layout::{TokenStream};
-use environment::{Environment, LocalEnv};
+use environment::{LayoutEnv, LocalEnv, GraphChain, LayoutChain};
 use io::{Stamp, IoRef};
 use woot::{WString, WStringIter};
 use inlinable_string::InlinableString;
+use output::{Output, Writer, Glue};
 
 /// The Document is a Directed Acyclic Graph.
 ///
@@ -21,15 +22,10 @@ use inlinable_string::InlinableString;
 pub type NodeP = P<Node>;
 pub type NodeListP = P<NodeList<NodeP>>;
 
-pub trait Node: Debug {    
+pub trait Node {    
     /// when building the graph, this method is called
     /// to add child-nodes to the index
     fn childs(&self, &mut Vec<NodeP>) {}
-    
-    /// hack to get the LocalEnv
-    fn env(&self) -> Option<&LocalEnv> {
-        None
-    }
     
     /// linearize the node
     //fn encode(&self, e: &mut Encoder);
@@ -37,21 +33,13 @@ pub trait Node: Debug {
     /// one or more child nodes were modified
     fn modified(&self) {}
     
-    
     /// compute layout graph
-    fn layout(&self, env: Environment, s: &mut TokenStream);
-
-    /// prefers a space to the (left, right) neightbour?
-    /// false wins over true.
-    fn space(&self) -> (bool, bool) {
-        (true, true)
-    }
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>);
     
     /// ?
     fn add_ref(&self, _: &Rc<Node>) {}
 }
 
-#[derive(Debug)]
 pub struct P<N: ?Sized + Node> {
     rc: Rc<N>,
     //references: LinkedList<P<N>>
@@ -63,11 +51,8 @@ impl<N: ?Sized> Node for P<N> where N: Node {
     fn modified(&self) {
         self.rc.modified()
     }
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
-        self.rc.layout(env, s)
-    }
-    fn space(&self) -> (bool, bool) {
-        self.rc.space()
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+        self.rc.layout(env, w)
     }
 }
 impl<N> P<N> where N: Node {
@@ -106,7 +91,6 @@ impl<N: ?Sized> Clone for P<N> where N: Node {
     }
 }
 
-#[derive(Debug)]
 pub enum Placeholder {
     Body,
     Argument(usize),
@@ -114,9 +98,7 @@ pub enum Placeholder {
     Unknown(String)
 }
 impl Node for Placeholder {
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
-        use blocks::LeafBuilder;
-        
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
         let fields = env.fields().unwrap();
         let n: Option<NodeP> = match self {
             &Placeholder::Body => fields.body().map(|n| n.into()),
@@ -125,21 +107,22 @@ impl Node for Placeholder {
             &Placeholder::Arguments => fields.args().map(|n| n.into()),
             _ => None
         };
-        n.map(|n| n.layout(env.with_fields(fields.parent()), s))
+        n.map(|n| n.layout(env.with_fields(fields.parent()), w))
         .unwrap_or_else(|| {
             println!("no macro set");
-            let b = LeafBuilder::new(env, s);
-            match self {
-                &Placeholder::Body => b.word("$body"),
-                &Placeholder::Argument(n) => b.word(&format!("${}", n)),
-                &Placeholder::Arguments => b.word("$args"),
-                &Placeholder::Unknown(ref s) => b.word(&format!("${}", s)),
+            let o = w.output;
+            let f = env.default_font().unwrap();
+            let w = match self {
+                &Placeholder::Body => o.measure(f, "$body"),
+                &Placeholder::Argument(n) => o.measure(f, &format!("${}", n)),
+                &Placeholder::Arguments => o.measure(f, "$args"),
+                &Placeholder::Unknown(ref s) => o.measure(f, &format!("${}", s)),
             };
+            w.push_word(Glue::space(), Glue::space(), w);
         });
     }
 }
 
-#[derive(Debug)]
 pub struct Ref {
     name: String,
     target: RefCell<Option<NodeP>>
@@ -151,7 +134,7 @@ impl Ref {
             target: RefCell::new(None)
         }
     }
-    pub fn resolve(&mut self, env: Environment) {
+    pub fn resolve(&mut self, env: GraphChain) {
         *self.target.borrow_mut() = env.get_target(&self.name).cloned();
     }
     pub fn get(&self) -> Option<NodeP> {
@@ -165,7 +148,6 @@ impl Ref {
     }
 }
 
-#[derive(Debug)]
 pub struct GroupRef {
     key: (InlinableString, InlinableString),
     target: RefCell<Option<NodeP>>
@@ -177,7 +159,7 @@ impl GroupRef {
             target: RefCell::new(None)
         }
     }
-    pub fn resolve(&mut self, env: Environment) {
+    pub fn resolve(&mut self, env: GraphChain) {
         *self.target.borrow_mut() = env.get_group(&self.key).cloned();
     }
     pub fn get(&self) -> Option<NodeP> {
@@ -191,10 +173,7 @@ impl GroupRef {
     }
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
 pub struct NodeList<T: Sized + Node + Clone> {
-    #[derivative(Debug="ignore")]
     ws: WString<T, Stamp>
 }
 impl<T> NodeList<T> where T: Node + Clone {
@@ -228,9 +207,9 @@ impl<T> Node for NodeList<T> where T: Node + Sized + Clone + Into<NodeP> {
             out.push(n.clone().into());
         }
     }
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
         for n in self.iter() {
-            n.layout(env, s);
+            n.layout(env, w);
         }
     }
 }

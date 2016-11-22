@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::iter::FromIterator;
-use std::ops::{AddAssign};
+use std::ops::{AddAssign, Mul};
 use std::fmt::Debug;
-use typeset::{MeasuredWord};
+use output::{Output};
 
 // to flex or not to flex?
 #[allow(unused_variables)]
@@ -21,16 +21,15 @@ pub trait Flex : Debug + Sync + Send {
         }
     }
     
-    fn flex(&self, factor: f32) -> Arc<Flex> {
+    fn flex(&self, factor: f32) -> FlexMeasure {
         let w = self.width(0.);
-        Arc::new(FlexMeasure {
+        FlexMeasure {
             width: w,
             shrink: w / factor,
             stretch: w * factor,
             height: self.height(0.)
-        }) as Arc<Flex>
+        }
     }
-
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -39,13 +38,6 @@ pub struct FlexMeasure {
     stretch:    f32,
     width:      f32,
     height:     f32
-}
-#[allow(unused_variables)]
-impl Flex for FlexMeasure {
-    fn stretch(&self, line_width: f32) -> f32 { self.stretch }
-    fn shrink(&self, line_width: f32) -> f32 { self.shrink }
-    fn width(&self, line_width: f32) -> f32 { self.width }
-    fn height(&self, line_width: f32) -> f32 { self.height }
 }
 
 impl FlexMeasure {
@@ -76,6 +68,18 @@ impl AddAssign for FlexMeasure {
         self.height = self.height.max(rhs.height);
     }
 }
+impl Mul<f32> for FlexMeasure {
+    type Output = FlexMeasure;
+    
+    fn mul(&self, f: f32) -> FlexMeasure {
+        FlexMeasure {
+            width:      self.width * f,
+            stretch:    self.stretch * f,
+            shrink:     self.shrink * f,
+            height:     self.height
+        }        
+    }
+}
 
 /// Send is reqired
 /// All indexing has to be relative
@@ -84,18 +88,15 @@ impl AddAssign for FlexMeasure {
 /// As simple "space" (_) is the most common item in the stream,
 /// is should be represented by only one item.
 #[derive(Clone, Debug)]
-enum StreamItem {
+enum StreamItem<O: Output> {
     /// A single word (sequence of glyphs)
-    Word(Arc<MeasuredWord>),
+    Word(O::Word),
     
-    /// Continue on the next line
-    Linebreak,
+    /// Continue on the next line (fill)
+    Linebreak(bool),
     
-    /// non-breaking space
-    Space(Arc<Flex>),
-    
-    /// breakable space
-    BreakingSpace(Arc<Flex>),
+    /// (breaking, measure)
+    Space(bool, FlexMeasure),
     
     /// Somtimes there are different possiblites of representing something.
     /// A Branch solves this by splitting the stream in two parts.
@@ -118,12 +119,12 @@ enum StreamItem {
 
 
 #[derive(Clone, Debug)]
-pub struct TokenStream {
-    buf:    Vec<StreamItem>,
+pub struct TokenStream<O: Output> {
+    buf:    Vec<StreamItem<O>>,
     space:  bool
 }
-impl TokenStream {
-    pub fn new() -> TokenStream {
+impl<O: Output> TokenStream<O> {
+    pub fn new() -> TokenStream<O> {
         TokenStream {
             buf:    vec![],
             space:  false
@@ -134,52 +135,36 @@ impl TokenStream {
         self.buf.len()
     }
     
-    fn add(&mut self, i: StreamItem) {
+    fn add(&mut self, i: StreamItem<O>) {
         self.buf.push(i);
     }
     
-    pub fn extend(&mut self, t: &TokenStream) {
+    pub fn extend(&mut self, t: &TokenStream<O>) {
         self.buf.extend_from_slice(&t.buf);
     }
     
-    pub fn word(&mut self, w: Arc<MeasuredWord>) {
+    pub fn word(&mut self, w: O::Word) {
         self.add(StreamItem::Word(w));
     }
     
-    pub fn maybe_space(&mut self, space_left: bool, space_right: bool) -> bool {
-        let s = self.space && space_left;
-        self.space = space_right;
-        s
+    pub fn space(&mut self, breaking: bool, measure: FlexMeasure) {
+        self.add(StreamItem::Space(breaking, measure));
     }
     
-    pub fn nbspace(&mut self, f: Arc<Flex>) {
-        self.add(StreamItem::Space(f));
+    pub fn newline(&mut self, fill: bool) {
+        self.add(StreamItem::Linebreak(fill));
     }
     
-    pub fn space(&mut self, f: Arc<Flex>) {
-        self.add(StreamItem::BreakingSpace(f));
-    }
-    
-    pub fn newline(&mut self) {
-        match self.buf.last() {
-            Some(&StreamItem::Linebreak) => {},
-            _ => {
-                self.add(StreamItem::Linebreak);
-                self.space = false;
-            }
-        }
-    }
-    
-    pub fn branch(&mut self, a: &TokenStream, b: &TokenStream) {
+    pub fn branch(&mut self, a: &TokenStream<O>, b: &TokenStream<O>) {
         self.add(StreamItem::BranchEntry(b.buf.len() + 1));
         self.extend(b);
         self.add(StreamItem::BranchExit(a.buf.len()));
         self.extend(a);
     }
     
-    pub fn branch_many<I>(&mut self, default: TokenStream, others: I)
-    where I: Iterator<Item=TokenStream> {
-        let mut others: Vec<TokenStream> = others.collect();
+    pub fn branch_many<I>(&mut self, default: TokenStream<O>, others: I)
+    where I: Iterator<Item=TokenStream<O>> {
+        let mut others: Vec<TokenStream<O>> = others.collect();
         
         if others.len() == 0 {
             self.extend(&default);
@@ -210,12 +195,12 @@ struct LineBreak {
 }
 type Entry = Option<LineBreak>;
 
-pub struct ParagraphLayout<'a> {
-    items:      &'a Vec<StreamItem>,
+pub struct ParagraphLayout<'a, O: Output> {
+    items:      &'a Vec<StreamItem<O>>,
     width:      f32,
 }
-pub struct Line {
-    pub words:  Vec<(Arc<MeasuredWord>, f32)>,
+pub struct Line<O: Output> {
+    pub words:  Vec<(Arc<O::Word>, f32)>,
     pub height: f32
 }
 
@@ -228,15 +213,15 @@ struct LineContext {
     branches:   u8 // number of branches so far (<= 64)
 }
 
-impl<'a> ParagraphLayout<'a> {
-    pub fn new(s: &'a TokenStream, width: f32) -> ParagraphLayout<'a> {
+impl<'a, O> ParagraphLayout<'a, O> where O: Output {
+    pub fn new(s: &'a TokenStream<O>, width: f32) -> ParagraphLayout<'a, O> {
         ParagraphLayout {
             items: &s.buf,
             width: width
         }
     }
     
-    pub fn run(&mut self) -> Vec<Line> {
+    pub fn run(&mut self) -> Vec<Line<O>> {
         use std::iter::repeat;
         
         let limit = self.items.len();
@@ -303,8 +288,7 @@ impl<'a> ParagraphLayout<'a> {
                         measure += w.measure(self.width);
                         words.push((w, x));
                     },
-                    StreamItem::Space(s) |
-                    StreamItem::BreakingSpace(s) => {
+                    StreamItem::Space(_, s) => {
                         measure += s.measure(self.width)
                     },
                     StreamItem::BranchEntry(len) => {
@@ -315,7 +299,7 @@ impl<'a> ParagraphLayout<'a> {
                         branches += 1;
                     },
                     StreamItem::BranchExit(skip) => pos += skip,
-                    _ => {}
+                    StreamItem::Newline(_) => unreachable!()
                 }
                 pos += 1;
             }
@@ -329,7 +313,6 @@ impl<'a> ParagraphLayout<'a> {
         lines
     }
     
-    
     fn complete_line(&self, nodes: &mut Vec<Entry>, c: LineContext) -> usize {
         let mut last = c.begin;
         let mut c = c;
@@ -338,25 +321,29 @@ impl<'a> ParagraphLayout<'a> {
             let n = c.pos;
             let ref item = self.items[n];
             match item {
-            //match self.items[n] {
                 &StreamItem::Word(ref w) => {
                     c.measure += w.measure(self.width);
                 },
-                &StreamItem::Space(ref s) => {
-                    c.measure += s.measure(self.width);
-                },
-                &StreamItem::BreakingSpace(ref s) => {
-                    // breaking case:
-                    // width is not added (yet)!
-                    if self.maybe_update(&c, &mut nodes[n+1]) {
-                        last = n+1;
+                &StreamItem::Space(breaking, ref s) => {
+                    if breaking {
+                        // breaking case:
+                        // width is not added yet!
+                        if self.maybe_update(&c, &mut nodes[n+1]) {
+                            last = n+1;
+                        }
                     }
                     
-                    // non-breaking case:
                     // add width now.
                     c.measure += s.measure(self.width);
                 }
-                &StreamItem::Linebreak => {
+                &StreamItem::Linebreak(fill) => {
+                    use std::cmp::max;
+                    
+                    if fill {
+                        c.measure.width = max(self.width, c.measure.width);
+                        c.measure.stretch = max(self.width, c.measure.stretch);
+                    }
+                
                     if self.maybe_update(&c, &mut nodes[n+1]) {
                         last = n+1;
                     }

@@ -12,7 +12,8 @@ use std::marker::PhantomData;
 use woot::{WString, WStringIter, IncrementalStamper, Key};
 use document::{Node, NodeP};
 use layout::TokenStream;
-use environment::{Environment, prepare_environment, LocalEnv};
+use environment::{LocalEnv, LayoutEnv, GraphChain, LayoutChain, prepare_graph};
+use output::{Output, Writer};
 
 pub use rmp_serialize::{Encoder, Decoder};
 
@@ -175,7 +176,7 @@ impl IoMachine {
 
         println!("load yarn: {:?}", yarn);
         
-        let mut env = prepare_environment();
+        let mut env = prepare_graph();
 
         let mut data = String::new();
         File::open(yarn).expect("could not open file")
@@ -183,7 +184,7 @@ impl IoMachine {
         
         // the lifetime of io.clone() ensures no borrow exists when the function
         // returns from this call
-        let root = Module::parse(IoRef::new(self), Environment::root(&env), &data);
+        let root = Module::parse(IoRef::new(self), GraphChain::root(&env), &data);
         println!("parsing complete");
         // thus this call can not fail
         self.insert_node(root.clone());
@@ -191,10 +192,11 @@ impl IoMachine {
         self.active = Some((root, env));
     }
     
-    pub fn layout(&self, s: &mut TokenStream) {
+    pub fn layout<O: Output>(&self, w: &mut Writer<O>) {
+        let layout_env = LayoutEnv::new();
         match self.active {
             Some((ref root, ref env)) =>
-                root.layout(Environment::root(env), s),
+                root.layout(LayoutChain::root(env, layout_env), w),
             None => {}
         }
     }

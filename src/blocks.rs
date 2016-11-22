@@ -1,103 +1,30 @@
 use std::sync::Arc;
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
-use environment::{Environment, LocalEnv, Fields};
+use environment::{GraphChain, LocalEnv, Fields, LayoutChain};
 use document::*;
 use layout::{TokenStream, Flex};
-use typeset::Font;
 use parser;
 use io::IoRef;
-
-pub struct LeafBuilder<'a> {
-    env:    Environment<'a>,
-    space:  Arc<Flex>,
-    font:   Arc<Font>,
-    stream: &'a mut TokenStream
-}
-impl<'a> LeafBuilder<'a> {
-    pub fn new(env: Environment<'a>, s: &'a mut TokenStream) -> LeafBuilder<'a> {
-        let font = env.default_font().unwrap().clone();
-        LeafBuilder {
-            env:    env,
-            space:  font.space().flex(2.0),
-            font:   font,
-            stream: s
-        }
-    }
-    pub fn newline(mut self) -> LeafBuilder<'a> {
-        self.stream.newline();
-        self
-    }
-    pub fn space(mut self) -> LeafBuilder<'a> {
-        self.stream.space(self.space.clone());
-        self
-    }
-    pub fn nbspace(mut self) -> LeafBuilder<'a> {
-        self.stream.nbspace(self.space.clone());
-        self
-    }
-    pub fn word(mut self, word: &str) -> LeafBuilder<'a> {
-        self.stream.word(self.font.measure(word));
-        self
-    }
-    pub fn word_hyphenated(mut self, word: &str) -> LeafBuilder<'a> {
-        self.env.hyphenate(&mut self.stream, word, &self.font);
-        self
-    }
-    pub fn token(mut self, name: &str) -> LeafBuilder<'a> {
-        if let Some(ts) = self.env.get_token(name) {
-            self.stream.extend(ts);
-        }
-        self
-    }
-}
-
-macro_rules! leaf {
-    ($env:ident, $stream:ident << $($rest:tt)*) => (
-        leaf_complete!(LeafBuilder::new($env, $stream), $($rest)*)
-    )
-}
-macro_rules! leaf_complete {
-    ($builder:expr) => (
-        {$builder;}
-    );
-    ($builder:expr, newline $($rest:tt)*) => (
-        leaf_complete!($builder.newline() $($rest)*)
-    );
-    ($builder:expr, ~ $($rest:tt)*) => (
-        leaf_complete!($builder.nbspace() $($rest)*)
-    );
-    ($builder:expr, _ $($rest:tt)*) => (
-        leaf_complete!($builder.space() $($rest)*)
-    );
-    ($builder:expr, / $name:ident $($rest:tt)*) => (
-        leaf_complete!($builder.token(stringify!($name)) $($rest)*)
-    );
-    ($builder:expr, - $x:expr) => (
-        {$builder.word_hyphenated($x);}
-    );
-    ($builder:expr, - $x:expr, $($rest:tt)*) => (
-        leaf_complete!($builder.word_hyphenated($x), $($rest)*)
-    );
-    ($builder:expr, $x:expr) => (
-        {$builder.word($x);}
-    );
-    ($builder:expr, $x:expr, $($rest:tt)*) => (
-        leaf_complete!($builder.word($x), $($rest)*)
-    );
-}
+use output::{Output, Word, Glue, Writer};
 
 #[derive(Debug)]
 struct ErrorBlock(String);
 impl Node for ErrorBlock {
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
-        leaf!(env, s << "Error:", ~, &self.0, newline);
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+        let font = env.default_font().unwrap();
+        w.push_word(Glue::space(), Glue::nbspace(),
+            w.output.measure(font, "Error")
+        );
+        w.push_word(Glue::nbspace(), Glue::space(),
+            w.output.measure(font, &self.0)
+        );
     }
 }
 
 
 /// process the block and return the resulting layoutgraph
-fn process_block(io: IoRef, env: Environment, b: &parser::Block) -> P<Node> {
+fn process_block(io: IoRef, env: GraphChain, b: &parser::Block) -> P<Node> {
     // look up the name
     println!("process_block name: {}", b.name);
     P::from(Pattern::from_block(io, env, b)).into()
@@ -105,7 +32,7 @@ fn process_block(io: IoRef, env: Environment, b: &parser::Block) -> P<Node> {
 
 type DefinitionListP = P<NodeList<P<Definition>>>;
 
-fn process_body(io: IoRef, env: Environment, childs: &[parser::Body]) -> P<NodeList<NodeP>> {
+fn process_body(io: IoRef, env: GraphChain, childs: &[parser::Body]) -> P<NodeList<NodeP>> {
     use parser::Body;
     
     P::new(NodeList::from(io.clone(),
@@ -126,36 +53,36 @@ pub enum Role {
 }
 
 #[derive(Debug)]
-pub struct Word {
+pub struct WordNode {
     content:    String,
     role:       Role
 }
-impl Word {
-    pub fn new(s: &str, r: Role) -> Word {
-        Word {
+impl WordNode {
+    pub fn new(s: &str, r: Role) -> WordNode {
+        WordNode {
             content:    s.to_string(),
             role:       r
         }
     }
 }
-impl Node for Word {
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
-        let (left, right) = self.space();
+impl Node for WordNode {
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+        let (left, right) = match self.role {
+            Role::Word => (Glue::space(), Glue::space()),
+            Role::Punctuation => (Glue::None, Glue::space())
+        };
+        
         let font = env.default_font().unwrap();
-        if s.maybe_space(left, right) {
-            s.space(font.space().flex(2.0));
-        }
-        env.hyphenate(s, &self.content, &font);
-    }
-    fn space(&self) -> (bool, bool) {
-        match self.role {
-            Role::Word => (true, true),
-            Role::Punctuation => (false, true)
-        }
+        let word = Word {
+            text:   &self.content,
+            left:   left,
+            right:  right
+        };
+        env.hyphenate(w, font, word);
     }
 }
 
-fn process_placeholder(env: Environment, v: &parser::Var) -> Placeholder {
+fn process_placeholder(env: GraphChain, v: &parser::Var) -> Placeholder {
     use parser::Var;
     
     match v {
@@ -167,7 +94,7 @@ fn process_placeholder(env: Environment, v: &parser::Var) -> Placeholder {
         &Var::Number(n) => Placeholder::Argument(n)
     }
 }
-fn item_node(io: IoRef, env: Environment, i: &parser::Item) -> NodeP {
+fn item_node(io: IoRef, env: GraphChain, i: &parser::Item) -> NodeP {
     use parser::Item;
     
     match i {
@@ -182,28 +109,25 @@ fn item_node(io: IoRef, env: Environment, i: &parser::Item) -> NodeP {
 
 #[derive(Debug)]
 pub struct TokenNode {
-    token:  TokenStream
+  //  token:  TokenStream
 }
 impl TokenNode {
-    fn from(env: Environment, name: &str) -> TokenNode {
-        let mut token = TokenStream::new();
+    fn from(env: GraphChain, name: &str) -> TokenNode {
+    /*    let mut token = TokenStream::new();
         match env.get_token(name) {
             Some(ts) => {
                 token.extend(ts);
             },
-            None => {
-                let ref mut s = token;
-                leaf!(env, s << &format!("\\{}", name));
-            }
-        }
+            None => {}
+        }*/
         TokenNode {
-            token: token
+           // token: token
         }
     }
 }
 impl Node for TokenNode {
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
-        s.extend(&self.token);
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+        //s.extend(&self.token);
     }
 }
 
@@ -214,7 +138,7 @@ pub struct Group {
 }
 
 impl Group {
-    pub fn from(io: IoRef, env: Environment, g: &parser::Group) -> P<Group> {
+    pub fn from(io: IoRef, env: GraphChain, g: &parser::Group) -> P<Group> {
         let content = P::new(NodeList::from(io.clone(),
             g.content.iter().map(|n| item_node(io.clone(), env, n))
         ));
@@ -238,29 +162,22 @@ impl Node for Group {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.fields.childs(out)
     }
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
         if let Some(target) = self.target.get() {
             let field_link = env.link_fields(&self.fields);
-            target.layout(env.with_fields(Some(&field_link)), s)
+            target.layout(env.with_fields(Some(&field_link)), w)
         } else {
             let font = env.default_font().expect("no default font set");
-            let space = font.space();
             let open_close = self.target.key();
             
-            if s.maybe_space(true, false) {
-                s.space(space.clone());
-            }
-            s.word(font.measure(&open_close.0));
+            w.push_word(Glue::space(), Glue::None, w.output.measure(font, &open_close.0));
             
             match self.fields.args {
-                Some(ref n) => n.layout(env, s),
+                Some(ref n) => n.layout(env, w),
                 None => unreachable!()
             }
             
-            if s.maybe_space(false, true) {
-                s.space(space.clone());
-            }
-            s.word(font.measure(&open_close.1));
+            w.push_word(Glue::None, Glue::space(), w.output.measure(font, &open_close.1));
         }
     }
 }
@@ -270,7 +187,7 @@ pub struct Leaf {
     content: NodeList<NodeP>
 }
 impl Leaf {
-    pub fn from(io: IoRef, env: Environment, items: &[parser::Item]) -> Leaf {
+    pub fn from(io: IoRef, env: GraphChain, items: &[parser::Item]) -> Leaf {
         Leaf {
             content: NodeList::from(io.clone(),
                 items.iter().map(|n| item_node(io.clone(), env, n))
@@ -288,10 +205,10 @@ impl Node for Leaf {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.content.childs(out)
     }
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
         if self.content.size() > 0 {
-            self.content.layout(env, s);
-            leaf!(env, s << /hfill, newline);
+            self.content.layout(env, w);
+            w.promote(Glue::Newline { fill: true });
         }
     }
 }
@@ -301,7 +218,7 @@ struct List {
     items: NodeList<P<Leaf>>
 }
 impl List {
-    pub fn from(io: IoRef, env: Environment, items: &[Vec<parser::Item>]) -> List {
+    pub fn from(io: IoRef, env: GraphChain, items: &[Vec<parser::Item>]) -> List {
         List {
             items: NodeList::from(
                 io.clone(),
@@ -314,15 +231,15 @@ impl Node for List {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.items.childs(out)
     }
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
         for item in self.items.iter() {
-            leaf!(env, s << "· ");
-            item.layout(env, s);
+            let font = env.default_font().expect("no default font set");
+            w.push_word(Glue::None, Glue::space(), w.output.measure(font, "· "));
         }
     }
 }
 
-fn init_env(io: IoRef, env: Environment, body: &parser::BlockBody) -> LocalEnv {
+fn init_env(io: IoRef, env: GraphChain, body: &parser::BlockBody) -> LocalEnv {
     let mut local_env = LocalEnv::new();
     for cmd in body.commands.iter() {
         println!("command: {}", cmd.name);
@@ -346,15 +263,8 @@ pub struct Module {
     body:       NodeListP
 }
 impl Module {
-    pub fn parse(io: IoRef, env: Environment, s: &str) -> NodeP {
+    pub fn parse(io: IoRef, env: GraphChain, input: &str) -> NodeP {
         use nom::IResult;
-        use nom::slug::wrap;
-        
-        #[cfg(not(debug_assertions))]
-        let input = s;
-        
-        #[cfg(debug_assertions)]
-        let input = wrap(s);
         
         let body = match parser::block_body(input, 0) {
             IResult::Done(rem, b) => {
@@ -382,12 +292,9 @@ impl Node for Module {
         self.env.childs(out);
         self.body.childs(out);
     }
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
         println!("Module::layout()");
-        self.body.layout(env.link(&self.env), s)
-    }
-    fn env(&self) -> Option<&LocalEnv> {
-        Some(&self.env)
+        self.body.layout(env.link(&self.env), w)
     }
 }
 
@@ -411,10 +318,10 @@ impl Node for Definition {
         out.push(self.args.clone().into());
         out.push(self.body.clone().into());
     }
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
         println!("Definition::layout() {}", self.name);
-        self.args.layout(env.link(&self.env), s);
-        self.body.layout(env.link(&self.env), s);
+        self.args.layout(env.link(&self.env), w);
+        self.body.layout(env.link(&self.env), w);
     }
     fn add_ref(&self, source: &Rc<Node>) {
         self.references.borrow_mut().push(Rc::downgrade(source));
@@ -422,7 +329,7 @@ impl Node for Definition {
 }
 
 impl Definition {
-    fn from_param(io: IoRef, env: Environment, p: &parser::Parameter) -> Definition {
+    fn from_param(io: IoRef, env: GraphChain, p: &parser::Parameter) -> Definition {
         let local_env = init_env(io.clone(), env, &p.value);
         let args = P::new(
             NodeList::from(io.clone(),
@@ -455,7 +362,7 @@ pub struct Pattern {
 }
 
 impl Pattern {
-    fn from_block(io: IoRef, env: Environment, block: &parser::Block) -> NodeP {
+    fn from_block(io: IoRef, env: GraphChain, block: &parser::Block) -> NodeP {
         
         let mut local_env = init_env(io.clone(), env, &block.body);
         let args = P::new(
@@ -487,13 +394,15 @@ impl Node for Pattern {
         self.env.childs(out);
         self.fields.childs(out);
     }
-    fn layout(&self, env: Environment, s: &mut TokenStream) {
+    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
         if let Some(ref target) = self.target.get() {
             let field_link = env.link_fields(&self.fields);
-            target.layout(env.link(&self.env).with_fields(Some(&field_link)), s)
+            target.layout(env.link(&self.env).with_fields(Some(&field_link)), w);
         } else {
-            leaf!(env, s << "Unresolved", _, "macro", _, "'", self.target.name(),
-                "'", /hfill, newline);
+            let font = env.default_font().expect("no default font set");
+            for s in &["unresolved" as &str, "macro" as &str, self.target.name()] {
+                w.push_word(Glue::space(), Glue::space(), w.output.measure(font, s));
+            }
         }
     }
 }

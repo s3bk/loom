@@ -1,43 +1,21 @@
+use layout::{Flex, FlexMeasure, TokenStream, ParagraphLayout};
+use image::{GrayImage, Luma};
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::cell::RefCell;
 use rusttype;
-use image::{GrayImage, Luma};
-use layout::{Flex};
 use std::fmt::{Debug, self};
-
-pub trait MeasuredWord : Flex {
-    fn draw_at(&self, s: &mut GrayImage, p: (f32, f32));
-}
-
-pub trait Font {
-    /// It is highly recommended to implement caching.
-    fn measure(&self, word: &str) -> Arc<MeasuredWord>;
-    fn space(&self) -> Arc<Flex>;
-}
-
-pub trait UnscaledFont {
-    fn scale(&self, size: f32) -> Arc<Font>;
-}
-
-/// Abstract Type Engine that is used to produce visible text
-pub trait TypeEngine {
-    // for now ... needs more functionality
-    fn load_font(&mut self, file: &str) -> Result<Box<UnscaledFont>, Box<Error>>;
-}
+use output::{Output, VectorOutput};
 
 
-
-
-// concrete type //
 struct RustTypeFont {
     font:   rusttype::Font<'static>,
     scale:  rusttype::Scale,
-    cache:  RefCell<HashMap<String, Arc<RustTypeWord>>>,
+    cache:  RefCell<HashMap<String, Rc<RustTypeWord>>>,
 }
 impl RustTypeFont {
-    fn _measure(&self, word: &str) -> Arc<RustTypeWord> {
+    fn measure(&self, word: &str) -> Rc<RustTypeWord> {
         if let Some(w) = self.cache.borrow().get(word) {
             return w.clone();
         }
@@ -61,7 +39,7 @@ impl RustTypeFont {
             prev_id = id;
         }
         
-        let w = Arc::new(RustTypeWord {
+        let w = Rc::new(RustTypeWord {
             font:       self.font.clone(),
             scale:      self.scale,
             glyphs:     glyph_list,
@@ -71,16 +49,11 @@ impl RustTypeFont {
         self.cache.borrow_mut().insert(word.to_owned(), w.clone());
         w
     }
-}
-impl Font for RustTypeFont {
-    fn measure(&self, word: &str) -> Arc<MeasuredWord> {
-        self._measure(word) as Arc<MeasuredWord>
-    }
-    
-    fn space(&self) -> Arc<Flex> {
-        self._measure(" ") as Arc<Flex>
+    fn space(&self) -> FlexMeasure {
+        self.measure(" ").flex(0.)
     }
 }
+
 struct RustTypeWord {
     font:       rusttype::Font<'static>,
     scale:      rusttype::Scale,
@@ -94,7 +67,7 @@ fn saturate(pixel: &mut Luma<u8>, increment: u8) {
     *v = v.saturating_sub(increment);
 }
 
-impl MeasuredWord for RustTypeWord {
+impl RustTypeWord {
     fn draw_at(&self, image: &mut GrayImage, pos: (f32, f32)) {
         use rusttype::point;
         
@@ -140,41 +113,87 @@ impl Debug for RustTypeWord {
 struct UnscaledRustTypeFont {
     font:   rusttype::Font<'static>
 }
-impl UnscaledFont for UnscaledRustTypeFont {
-    fn scale(&self, size: f32) -> Arc<Font> {
-        Arc::new(RustTypeFont {
-            font:   self.font.clone(),
+
+struct PngOutput {
+    font: Rc<RustTypeFont>
+}
+impl Output for PngOutput {
+    type Word = Rc<RustTypeWord>;
+    type Font = Rc<RustTypeFont>;
+    
+    fn measure(&self, font: &RustTypeFont, word: &str) -> Rc<RustTypeWord> {
+        font._measure(word)
+    }
+    
+}
+impl VectorOutput for PngOutput {
+    type UnscaledFont = Rc<UnscaledRustTypeFont>;
+    
+    fn scale(&self, font: &UnscaledRustTypeFont, size: f32) -> Rc<RustTypeFont> {
+        Rc::new(RustTypeFont {
+            font:   font.font.clone(),
             scale:  rusttype::Scale::uniform(size),
             cache:  RefCell::new(HashMap::new())
-        }) as Arc<Font>
+        })
     }
-}
 
-pub struct RustTypeEngine {}
-
-impl TypeEngine for RustTypeEngine {
-    fn load_font(&mut self, path: &str) -> Result<Box<UnscaledFont>, Box<Error>> {
+    fn use_font(&mut self, file: &str) -> Result<UnscaledRustTypeFont, Box<Error>> {
         use std::fs::File;
         use std::io::Read;
         
-        let mut f = try!(File::open(path));
+        let mut f = try!(File::open(file));
         let mut data = Vec::<u8>::new();
         try!(f.read_to_end(&mut data));
     
         Ok(Box::new(UnscaledRustTypeFont {
             font: rusttype::FontCollection::from_bytes(data).font_at(0).unwrap()
-        }) as Box<UnscaledFont>)
+        }))
     }
-}
-impl RustTypeEngine {
-    pub fn new() -> Box<TypeEngine> {
-        Box::new(RustTypeEngine {}) as Box<TypeEngine>
-    }
-    pub fn default() -> Box<UnscaledFont> {
-        Box::new(UnscaledRustTypeFont {
+    fn default_font(&mut self) -> UnscaledRustTypeFont {
+        UnscaledRustTypeFont {
             font: rusttype::FontCollection::from_bytes(
-                include_bytes!("../data/fonts/LiberationSerif-Regular.ttf") as &'static [u8]
+                include_bytes!(
+                    "../../data/fonts/LiberationSerif-Regular.ttf"
+                ) as &'static [u8]
             ).font_at(0).unwrap()
-        }) as Box<UnscaledFont>
+        }
     }
 }
+
+pub fn render(s: &TokenStream<PngOutput>, width: f32) -> GrayImage {
+    use std::time::SystemTime;
+    
+    fn m(label: &str, t0: SystemTime, t1: SystemTime) {
+        let d = t1.duration_since(t0).unwrap();
+        println!("{} {:01}.{:09}s", label, d.as_secs(), d.subsec_nanos());
+    }
+    
+    let t2 = SystemTime::now();
+    let margin_v = 10.0;
+    let margin_h = 10.0;
+    
+    let lines = ParagraphLayout::<PngOutput>::new(s, width).run();
+    let height: f32 = lines.iter().map(|l| l.height).sum();
+    let mut image = GrayImage::from_pixel(
+        (width + 2. * margin_h) as u32,
+        (height + 2. * margin_v) as u32,
+        Luma { data: [255u8] }
+    );
+    
+    let t3 = SystemTime::now();
+    m("layout:     ", t2, t3);
+    
+    let mut y = margin_v;
+    for line in lines.iter() {
+        y += line.height;
+        for &(ref word, x) in line.words.iter() {
+            word.draw_at(&mut image, (x+margin_h, y));
+        }
+    }
+    let t4 = SystemTime::now();
+    m("drawing:    ", t3, t4);
+    
+    image
+}
+
+

@@ -1,8 +1,9 @@
 use nom::{self, IResult, ErrorKind, digit, AsBytes, Compare, Slice, Offset,
-InputLength, IterIndices, Needed, CompareResult, FindToken};
+InputLength, InputIter, Needed, CompareResult, FindToken};
 use std::iter::{Iterator};
 use unicode_categories::UnicodeCategories;
 use unicode_brackets::UnicodeBrackets;
+use slug;
 
 macro_rules! alt_apply {
     ($i:expr, $arg:expr, $t:ident $(| $rest:tt)*) =>
@@ -14,11 +15,7 @@ macro_rules! slug {
     ($($t:tt)*) => ()
 }
 
-#[cfg(not(debug_assertions))]
 type Data<'a> = &'a str;
-
-#[cfg(debug_assertions)]
-type Data<'a> = nom::slug::Slug<'a>;
 
 #[macro_export]
 macro_rules! named (

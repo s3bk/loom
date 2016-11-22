@@ -1,7 +1,8 @@
-use environment::{Environment, LocalEnv};
+use environment::{LocalEnv, GraphChain};
 use io::IoRef;
 use std::error::Error;
 use std::fmt::{self, Display};
+use output::{Output, Writer, Word};
 use std;
 
 pub fn register(env: &mut LocalEnv) {
@@ -74,22 +75,25 @@ macro_rules! cmd_args {
 }
 
 pub type CommandResult = Result<(), CommandError>;
-pub type Command = fn(IoRef, Environment, &mut LocalEnv, &[String]) -> CommandResult;
+pub type Command = fn(IoRef, GraphChain, &mut LocalEnv, &[String]) -> CommandResult;
 
-fn cmd_fontsize(io: IoRef, env: Environment, local: &mut LocalEnv, args: &[String]) -> CommandResult {
-    use typeset::RustTypeEngine;
+fn cmd_fontsize(io: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
+ -> CommandResult
+{
     
     cmd_args!{args;
         size,
     };
     let scale = try!(size.parse().into());
     
-    local.set_default_font(RustTypeEngine::default().scale(scale));
+    //local.set_default_font(RustTypeEngine::default().scale(scale));
     println!("fontsize set to {}", size);
     Ok(())
 }
 
-fn cmd_group(io: IoRef, env: Environment, local: &mut LocalEnv, args: &[String]) -> CommandResult {
+fn cmd_group(io: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
+ -> CommandResult
+{
     cmd_args!{args;
         opening,
         name,
@@ -102,7 +106,9 @@ fn cmd_group(io: IoRef, env: Environment, local: &mut LocalEnv, args: &[String])
     Ok(())
 }
 
-fn cmd_hyphens(io: IoRef, env: Environment, local: &mut LocalEnv, args: &[String]) -> CommandResult {
+fn cmd_hyphens(io: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
+ -> CommandResult
+{
     use hyphenation::Hyphenator;
 
     if args.len() != 1 {
@@ -121,7 +127,9 @@ fn cmd_hyphens(io: IoRef, env: Environment, local: &mut LocalEnv, args: &[String
     }
 }
 
-fn cmd_load(io: IoRef, env: Environment, local: &mut LocalEnv, args: &[String]) -> CommandResult {
+fn cmd_load(io: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
+ -> CommandResult
+{
     use blocks::Module;
     use std::str;
     
@@ -151,7 +159,9 @@ fn cmd_load(io: IoRef, env: Environment, local: &mut LocalEnv, args: &[String]) 
 ///  2. if not presend, checks the presens of the name.yarn in CWD
 ///  3. if not present, check presence of file in $LOOM_DATA
 ///  4. otherwise gives an error
-fn cmd_use(_: IoRef, env: Environment, local: &mut LocalEnv, args: &[String]) -> CommandResult {
+fn cmd_use(_: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
+ -> CommandResult
+{
     for arg in args.iter() {
         if let Some(idx) = arg.rfind('/') {
             let parent = &arg[.. idx];

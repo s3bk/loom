@@ -15,13 +15,14 @@ rustc-serialize = "*"
 lz4 = "*"
 broadcast = "*"
 mio = "*"
-clap = {version="*", features=["yaml"]}
+clap = {version="*",   features=["yaml"]}
 derivative = "*"
 itertools = "*"
 futures = "*"
 curl = "*"
 inlinable_string = "*"
 ordermap = { git="https://github.com/bluss/ordermap" }
+pdf = "*"
 
 [dependencies.image]
 default-features = false
@@ -29,11 +30,9 @@ features = ["png_codec"]
 version = "0.10.3"
 
 [dependencies.nom]
-#git = "https://github.com/Geal/nom.git"
-git = "https://github.com/s3bk/nom.git"
-#path = "../nom"
+git = "https://github.com/Geal/nom.git"
 default_features = false
-features = ["slug"]
+features = []
 #version = "0.4"
 
 [dependencies.woot]

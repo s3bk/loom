@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::path::PathBuf;
-use typeset::{TypeEngine, Font, UnscaledFont};
 use layout::{TokenStream};
 use document::{Node, NodeP, P, NodeListP};
 use io::IoRef;
@@ -11,6 +10,7 @@ use parser;
 use commands::Command;
 use inlinable_string::InlinableString;
 use ordermap::OrderMap;
+use output::{Output, Writer, Word};
 
 /// The Environment can only be changed within the Block::parse call
 /// Is is therefore allowed to cache results whithin methods that do not involve
@@ -19,37 +19,31 @@ use ordermap::OrderMap;
 /// The Environment needs to be split in layout-relevant parts where
 /// the Definition wins, and scope relevant parts where the Pattern wins
 
-#[derive(Derivative)]
-#[derivative(Debug, Default="new")]
-pub struct LocalEnv {
-    #[derivative(Debug="ignore")]
+pub struct LayoutEnv<O: Output> {
+    /// fields used only during layout()
+    
     hyphenator:     Option<Hyphenator>,
     
     /// loaded fonts (without specified size)
     /// use with .get_font()
-    #[derivative(Debug="ignore")]
-    fonts:          HashMap<String, Box<UnscaledFont>>,
+    //fonts:          HashMap<String, Box<O::UnscaledFont>>,
     
     /// default font
-    #[derivative(Debug="ignore")]
-    default_font:   Option<Arc<Font>>,
+    default_font:   Option<Arc<O::Font>>,
     
-    #[derivative(Debug="ignore")]
-    font_engines:   Vec<Box<TypeEngine>>,
-    
-    paths:          Vec<PathBuf>,
-    
-    #[derivative(Debug="ignore")]
-    commands:       HashMap<String, Command>,
-    tokens:         HashMap<String, TokenStream>,
-    
-    #[derivative(Debug="ignore")]
-    targets:        HashMap<String, NodeP>,
-    
-    groups:         OrderMap<(InlinableString, InlinableString), NodeP>
+    tokens:         HashMap<String, TokenStream<O>>
 }
 
-#[derive(Debug)]
+/// used at graph creation and possibly layout
+pub struct LocalEnv {
+    paths:          Vec<PathBuf>,
+    commands:       HashMap<String, Command>,
+    targets:        HashMap<String, NodeP>,
+    groups:         OrderMap<(InlinableString, InlinableString), NodeP>
+}
+impl LocalEnv {
+}
+
 pub struct Fields {
     pub args:   Option<NodeListP>,
     pub body:   Option<NodeListP>
@@ -65,7 +59,6 @@ impl Fields {
     }
 }
 
-#[derive(Debug)]
 pub struct FieldLink<'a> {
     local:  &'a Fields,
     parent: Option<&'a FieldLink<'a>>
@@ -81,23 +74,21 @@ impl<'a> FieldLink<'a> {
         self.local.body.clone()
     }
 }
-#[derive(Derivative)]
-#[derivative(Debug)]
-#[derive(Copy, Clone)]
-pub struct Environment<'a> {
-    #[derivative(Debug="ignore")]
-    parent:         Option<&'a Environment<'a>>,
-    locals:         &'a LocalEnv,
-    fields:         Option<&'a FieldLink<'a>>
-}
 
-impl LocalEnv {
-    pub fn add_command(&mut self, name: &str, cmd: Command) {
-        self.commands.insert(name.to_owned(), cmd);
+impl LayoutEnv {
+    pub fn new() -> LayoutEnv<O> {
+        LayoutEnv {
+            hyphenator:     None,
+            default_font:   None,
+            //tokens:         HashMap::new()
+        }
     }
-    pub fn add_token(&mut self, name: &str, t: TokenStream) {
+    /*
+    pub fn add_token(&mut self, name: &str, t: TokenStream<O>) {
         self.tokens.insert(name.to_owned(), t);
     }
+    */
+    /*
     pub fn load_font(&mut self, path: &str, name: &str) -> bool {
         {
             self.font_engines.iter_mut()
@@ -108,15 +99,26 @@ impl LocalEnv {
         .map(|f| self.fonts.insert(name.to_owned(), f))
         .is_some()
     }
-    pub fn set_default_font(&mut self, f: Arc<Font>) {
+    */
+    pub fn set_default_font(&mut self, f: O::Font) {
         self.default_font = Some(f);
-    }
-    pub fn add_font_engine(&mut self, e: Box<TypeEngine>) {
-        self.font_engines.push(e)
     }
     pub fn set_hyphenator(&mut self, hyphenator: Hyphenator) {
         self.hyphenator = Some(hyphenator);
         println!("hyphenator set");
+    }
+}
+impl LocalEnv {
+    fn new() -> LocalEnv {
+        LocalEnv {
+            paths:      vec![],
+            commands:   HashMap::new(),
+            targets:    HashMap::new(),
+            groups:     OrderMap::new()
+        }
+    }
+    pub fn add_command(&mut self, name: &str, cmd: Command) {
+        self.commands.insert(name.to_owned(), cmd);
     }
     fn add_path(&mut self, path: PathBuf) {
         self.paths.push(path);
@@ -140,23 +142,59 @@ impl LocalEnv {
         self.targets.iter()
     }
 }
-impl<'a> Environment<'a> {
-    pub fn root(locals: &'a LocalEnv) -> Environment<'a> {
-        Environment {
+
+#[derive(Copy, Clone)]
+pub struct GraphChain<'a> {
+    parent:         Option<&'a GraphChain<'a>>,
+    fields:         Option<&'a FieldLink<'a>>,
+    local:          &'a LocalEnv,
+}
+
+#[derive(Copy, Clone)]
+pub struct LayoutChain<'a> {
+    parent:         Option<&'a LayoutChain<'a>>,
+    fields:         Option<&'a FieldLink<'a>>,
+    local:          &'a LocalEnv,
+    layout:         &'a LayoutEnv,
+    output:         &'a Output
+}
+
+impl<'a> GraphChain<'a> {
+    pub fn root(locals: &'a LocalEnv) -> GraphChain<'a> {
+        GraphChain {
             parent: None,
-            locals: locals,
-            fields: None
+            locals: locals
         }
     }
     
-    pub fn link(&'a self, locals: &'a LocalEnv) -> Environment<'a> {
-        Environment {
+    pub fn link(&'a self, locals: &'a LocalEnv) -> GraphChain<'a> {
+        GraphChain {
+            parent: Some(self),
+            locals: locals
+        }
+    }
+}
+
+impl<'a, O> LayoutChain<'a, O> where O: Output {
+    pub fn root(locals: &'a LocalEnv, layout: &'a LayoutEnv<O>, output: &'a O)
+    -> LayoutChain<'a, O> {
+        LayoutChain {
+            parent: None,
+            fields: None,
+            locals: locals,
+            layout: layout,
+            output: output
+        }
+    }
+    
+    pub fn link(&'a self, locals: &'a LocalEnv) -> LayoutChain<'a, O> {
+        LayoutChain {
             parent: Some(self),
             locals: locals,
-            fields: self.fields
+            ..      self
         }
     }
-    
+
     pub fn link_fields(&'a self, fields: &'a Fields) -> FieldLink<'a> {
         FieldLink {
             local:  fields,
@@ -164,14 +202,14 @@ impl<'a> Environment<'a> {
         }
     }
     
-    pub fn with_fields(self, fields: Option<&'a FieldLink<'a>>) -> Environment<'a> {
-        Environment {
+    pub fn with_fields(self, fields: Option<&'a FieldLink<'a>>) -> LayoutChain<'a, O> {
+        LayoutChain {
             fields: fields,
             ..      self
         }
     }
     
-    pub fn parent(&'a self) -> Option<&Environment<'a>> {
+    pub fn parent(&'a self) -> Option<&LayoutChain<'a, O>> {
         self.parent
     }
     
@@ -188,8 +226,9 @@ impl<'a> Environment<'a> {
             }
         }
     }
+    /*
     pub fn get_token(&self, name: &str) -> Option<&TokenStream> {
-        match self.locals.tokens.get(name) {
+        match self.locals.layout.get(name) {
             Some(c) => Some(c),
             None => match self.parent {
                 Some(p) => p.get_token(name),
@@ -198,8 +237,8 @@ impl<'a> Environment<'a> {
         }
     }
     
-    pub fn get_font(&self, name: &str, size: f32) -> Option<Arc<Font>> {
-        if let Some(f) = self.locals.fonts.get(name) {
+    pub fn get_font(&self, name: &str, size: f32) -> Option<O::Font> {
+        if let Some(f) = self.layout.fonts.get(name) {
             Some(f.scale(size))
         } else if let Some(p) = self.parent {
             p.get_font(name, size)
@@ -207,8 +246,8 @@ impl<'a> Environment<'a> {
             None
         }
     }
-    
-    pub fn default_font(&self) -> Option<Arc<Font>> {
+    */
+    pub fn default_font(&self) -> Option<O::Font> {
         match self.locals.default_font {
             Some(ref f) => Some(f.clone()),
             None => match self.parent {
@@ -229,28 +268,27 @@ impl<'a> Environment<'a> {
             }
         }
     }
-    pub fn hyphenate(&self, s: &mut TokenStream, word: &str, font: &Arc<Font>) {
+    pub fn hyphenate(&self, w: &mut Writer<O>, font: &O::Font, word: Word) {
         if let Some(hyphenator) = self.hyphenator() {
-            if let Some(points) = hyphenator.get(word) {
-                let mut s_default = TokenStream::new();
-                s_default.word(font.measure(word));
+            if let Some(points) = hyphenator.get(word.text) {
+                w.push(word.left, word.right, |l, o| {
+                    l.word(o.measure(font, word.text));
+                    
+                    for p in points.iter() {
+                        let (left, right) = p.apply(word.text);
+                        
+                        l.word(o.measure(font, &format!("{}-", left)));
+                        l.newline(false);
+                        l.word(o.measure(font, right));
+                    }
+                });
                 
-                s.branch_many(s_default,
-                    points.iter()
-                    .map(|hyphen| hyphen.apply(word))
-                    .map(|(left, right)| {
-                        let mut s_branch = TokenStream::new();
-                        s_branch.word(font.measure(&format!("{}-", left)));
-                        s_branch.newline();
-                        s_branch.word(font.measure(right));
-                        s_branch
-                    })
-                );
                 return;
             }
         }
         
-        s.word(font.measure(word));
+        // fallback
+        w.push_word(w.output.measure(font, word));
     }
     
     
@@ -289,9 +327,8 @@ impl<'a> Environment<'a> {
     }
 }   
 
-pub fn prepare_environment() -> LocalEnv {
+pub fn prepare_graph() -> LocalEnv {
     use layout::Flex;
-    use typeset::RustTypeEngine;
     use commands;
     use std::env::var_os;
     use std::path::Path;
@@ -308,27 +345,7 @@ pub fn prepare_environment() -> LocalEnv {
     let mut e = LocalEnv::new();
     
     e.add_path(data_path);
-    
-    e.add_font_engine(RustTypeEngine::new());
-    e.set_default_font(RustTypeEngine::default().scale(20.0));
-    
     commands::register(&mut e);
-    
-    #[derive(Debug)]
-    struct HFill {}
-    #[allow(unused_variables)]
-    impl Flex for HFill {    
-        fn stretch(&self, line_width: f32) -> f32 { line_width }
-        fn shrink(&self, line_width: f32) -> f32 { 0.0 }
-        fn width(&self, line_width: f32) -> f32 { line_width * 0.5 }
-        fn height(&self, line_width: f32) -> f32 { 0.0 }
-    }
-    {
-        let mut hfill = TokenStream::new();
-        hfill.nbspace(Arc::new(HFill{}));
-        e.add_token("hfill", hfill);
-    }
     
     e
 }
-
