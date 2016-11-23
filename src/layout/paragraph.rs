@@ -1,190 +1,5 @@
-use std::sync::Arc;
-use std::iter::FromIterator;
-use std::ops::{AddAssign, Mul};
-use std::fmt::Debug;
-use output::{Output};
-
-// to flex or not to flex?
-#[allow(unused_variables)]
-pub trait Flex : Debug + Sync + Send {
-    fn stretch(&self, line_width: f32) -> f32 { 0.0 }
-    fn shrink(&self, line_width: f32) -> f32 { 0.0 }
-    fn width(&self, line_width: f32) -> f32;
-    fn height(&self, line_width: f32) -> f32 { 0.0 }
-    
-    fn measure(&self, line_width: f32) -> FlexMeasure {
-        FlexMeasure {
-            shrink:     self.shrink(line_width),
-            stretch:    self.stretch(line_width),
-            width:      self.width(line_width),
-            height:     self.height(line_width)
-        }
-    }
-    
-    fn flex(&self, factor: f32) -> FlexMeasure {
-        let w = self.width(0.);
-        FlexMeasure {
-            width: w,
-            shrink: w / factor,
-            stretch: w * factor,
-            height: self.height(0.)
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct FlexMeasure {
-    shrink:     f32,
-    stretch:    f32,
-    width:      f32,
-    height:     f32
-}
-
-impl FlexMeasure {
-    pub fn zero() -> FlexMeasure {
-        FlexMeasure {
-            width: 0.,
-            stretch: 0.,
-            shrink: 0.,
-            height: 0.
-        }        
-    }
-    /// factor = -1 => self.shrink,
-    /// factor =  0 => self.width,
-    /// factor = +1 => self.stretch
-    pub fn at(&self, factor: f32) -> f32 {
-        (if factor < 0. {
-            (self.width - self.shrink)
-        } else {
-            (self.stretch - self.width)
-        } * factor + self.width)
-    }
-}
-impl AddAssign for FlexMeasure {
-    fn add_assign(&mut self, rhs: FlexMeasure) {
-        self.width += rhs.width;
-        self.stretch += rhs.stretch;
-        self.shrink += rhs.shrink;
-        self.height = self.height.max(rhs.height);
-    }
-}
-impl Mul<f32> for FlexMeasure {
-    type Output = FlexMeasure;
-    
-    fn mul(&self, f: f32) -> FlexMeasure {
-        FlexMeasure {
-            width:      self.width * f,
-            stretch:    self.stretch * f,
-            shrink:     self.shrink * f,
-            height:     self.height
-        }        
-    }
-}
-
-/// Send is reqired
-/// All indexing has to be relative
-/// (to enable inserting, replacing and deleting parts of the steam.)
-///
-/// As simple "space" (_) is the most common item in the stream,
-/// is should be represented by only one item.
-#[derive(Clone, Debug)]
-enum StreamItem<O: Output> {
-    /// A single word (sequence of glyphs)
-    Word(O::Word),
-    
-    /// Continue on the next line (fill)
-    Linebreak(bool),
-    
-    /// (breaking, measure)
-    Space(bool, FlexMeasure),
-    
-    /// Somtimes there are different possiblites of representing something.
-    /// A Branch solves this by splitting the stream in two parts.
-    /// The default path is taken by skipping the specified amount of entries.
-    /// The other one by following the next items.
-    ///
-    /// normal items
-    /// BranchEntry(3)
-    ///   branched item 1
-    ///   branched item 2
-    /// BranchExit(1)
-    ///   normal item 1
-    /// both sides joined here
-    BranchEntry(usize),
-    
-    /// Each BranchEntry is followed by BranchExit. It specifies the number of
-    /// items to skip.
-    BranchExit(usize)
-}
-
-
-#[derive(Clone, Debug)]
-pub struct TokenStream<O: Output> {
-    buf:    Vec<StreamItem<O>>,
-    space:  bool
-}
-impl<O: Output> TokenStream<O> {
-    pub fn new() -> TokenStream<O> {
-        TokenStream {
-            buf:    vec![],
-            space:  false
-        }
-    }
-    
-    pub fn len(&self) -> usize {
-        self.buf.len()
-    }
-    
-    fn add(&mut self, i: StreamItem<O>) {
-        self.buf.push(i);
-    }
-    
-    pub fn extend(&mut self, t: &TokenStream<O>) {
-        self.buf.extend_from_slice(&t.buf);
-    }
-    
-    pub fn word(&mut self, w: O::Word) {
-        self.add(StreamItem::Word(w));
-    }
-    
-    pub fn space(&mut self, breaking: bool, measure: FlexMeasure) {
-        self.add(StreamItem::Space(breaking, measure));
-    }
-    
-    pub fn newline(&mut self, fill: bool) {
-        self.add(StreamItem::Linebreak(fill));
-    }
-    
-    pub fn branch(&mut self, a: &TokenStream<O>, b: &TokenStream<O>) {
-        self.add(StreamItem::BranchEntry(b.buf.len() + 1));
-        self.extend(b);
-        self.add(StreamItem::BranchExit(a.buf.len()));
-        self.extend(a);
-    }
-    
-    pub fn branch_many<I>(&mut self, default: TokenStream<O>, others: I)
-    where I: Iterator<Item=TokenStream<O>> {
-        let mut others: Vec<TokenStream<O>> = others.collect();
-        
-        if others.len() == 0 {
-            self.extend(&default);
-            return;
-        }
-        
-        while others.len() > 1 {
-            for n in 0 .. others.len() / 2 {
-                let mut merged = TokenStream::new();
-                {
-                    let b = others.pop().unwrap();
-                    let ref a = others[n];
-                    merged.branch(a, &b);
-                }
-                others[n] = merged;
-            }
-        }
-        self.branch(&default, &others[0]);
-    }
-}
+use layout::{StreamItem, StreamVec, FlexMeasure, Flex};
+use output::Output;
 
 #[derive(Copy, Clone, Debug, Default)]
 struct LineBreak {
@@ -195,12 +10,12 @@ struct LineBreak {
 }
 type Entry = Option<LineBreak>;
 
-pub struct ParagraphLayout<'a, O: Output> {
-    items:      &'a Vec<StreamItem<O>>,
+pub struct ParagraphLayout<'a, O: Output + 'a> {
+    items:      &'a StreamVec<O::Word>,
     width:      f32,
 }
 pub struct Line<O: Output> {
-    pub words:  Vec<(Arc<O::Word>, f32)>,
+    pub words:  Vec<(O::Word, f32)>,
     pub height: f32
 }
 
@@ -214,9 +29,9 @@ struct LineContext {
 }
 
 impl<'a, O> ParagraphLayout<'a, O> where O: Output {
-    pub fn new(s: &'a TokenStream<O>, width: f32) -> ParagraphLayout<'a, O> {
+    pub fn new(s: &'a StreamVec<O::Word>, width: f32) -> ParagraphLayout<'a, O> {
         ParagraphLayout {
-            items: &s.buf,
+            items: s,
             width: width
         }
     }
@@ -289,7 +104,7 @@ impl<'a, O> ParagraphLayout<'a, O> where O: Output {
                         words.push((w, x));
                     },
                     StreamItem::Space(_, s) => {
-                        measure += s.measure(self.width)
+                        measure += s;
                     },
                     StreamItem::BranchEntry(len) => {
                         if b.path & (1<<branches) == 0 {
@@ -299,7 +114,7 @@ impl<'a, O> ParagraphLayout<'a, O> where O: Output {
                         branches += 1;
                     },
                     StreamItem::BranchExit(skip) => pos += skip,
-                    StreamItem::Newline(_) => unreachable!()
+                    StreamItem::Linebreak(_) => unreachable!()
                 }
                 pos += 1;
             }
@@ -314,6 +129,7 @@ impl<'a, O> ParagraphLayout<'a, O> where O: Output {
     }
     
     fn complete_line(&self, nodes: &mut Vec<Entry>, c: LineContext) -> usize {
+        use layout::Flex;
         let mut last = c.begin;
         let mut c = c;
         
@@ -324,7 +140,7 @@ impl<'a, O> ParagraphLayout<'a, O> where O: Output {
                 &StreamItem::Word(ref w) => {
                     c.measure += w.measure(self.width);
                 },
-                &StreamItem::Space(breaking, ref s) => {
+                &StreamItem::Space(breaking, s) => {
                     if breaking {
                         // breaking case:
                         // width is not added yet!
@@ -334,14 +150,16 @@ impl<'a, O> ParagraphLayout<'a, O> where O: Output {
                     }
                     
                     // add width now.
-                    c.measure += s.measure(self.width);
+                    c.measure += s;
                 }
                 &StreamItem::Linebreak(fill) => {
-                    use std::cmp::max;
-                    
                     if fill {
-                        c.measure.width = max(self.width, c.measure.width);
-                        c.measure.stretch = max(self.width, c.measure.stretch);
+                        if self.width > c.measure.stretch {
+                            c.measure.stretch = self.width;
+                            if self.width > c.measure.width {
+                                c.measure.width = self.width;
+                            }
+                        }
                     }
                 
                     if self.maybe_update(&c, &mut nodes[n+1]) {
@@ -418,4 +236,4 @@ impl<'a, O> ParagraphLayout<'a, O> where O: Output {
         true
     }
 }
-
+ 

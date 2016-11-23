@@ -30,7 +30,6 @@ fn main() {
         for q in queries {
             match h.get(q) {
                 Some(hn) => {
-                    println!("found {:?}", hn);
                     for h in hn.iter() {
                         let (pre, post) = h.apply(q);
                         println!("\t{}-{}", pre, post);

@@ -2,7 +2,8 @@ use environment::{LocalEnv, GraphChain};
 use io::IoRef;
 use std::error::Error;
 use std::fmt::{self, Display};
-use output::{Output, Writer, Word};
+use output::Output;
+use layout::{Word, Glue, Writer, Flex};
 use std;
 
 pub fn register(env: &mut LocalEnv) {
@@ -80,11 +81,10 @@ pub type Command = fn(IoRef, GraphChain, &mut LocalEnv, &[String]) -> CommandRes
 fn cmd_fontsize(io: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
  -> CommandResult
 {
-    
     cmd_args!{args;
         size,
     };
-    let scale = try!(size.parse().into());
+    let scale: f32 = try!(size.parse().into());
     
     //local.set_default_font(RustTypeEngine::default().scale(scale));
     println!("fontsize set to {}", size);

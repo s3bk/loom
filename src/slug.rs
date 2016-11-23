@@ -91,7 +91,9 @@ impl<'a> Slug<'a> {
         let marker: String = repeat(" ").take(cursor).collect();
         println!("line {}\n{}{}\n{}^ position", self.line, line, endl, marker);
     }
-    
+    pub fn len(&self) -> usize {
+        self.slice.len()
+    }
 }
 impl<'a> PartialEq for Slug<'a> {
     #[inline(always)]

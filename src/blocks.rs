@@ -1,24 +1,28 @@
 use std::sync::Arc;
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
-use environment::{GraphChain, LocalEnv, Fields, LayoutChain};
+use environment::{GraphChain, LocalEnv, Fields};
 use document::*;
-use layout::{TokenStream, Flex};
 use parser;
 use io::IoRef;
-use output::{Output, Word, Glue, Writer};
+use output::Output;
+use layout::{Atom, Glue, Writer, Flex};
+use inlinable_string::InlinableString;
 
-#[derive(Debug)]
+
 struct ErrorBlock(String);
 impl Node for ErrorBlock {
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
-        let font = env.default_font().unwrap();
-        w.push_word(Glue::space(), Glue::nbspace(),
-            w.output.measure(font, "Error")
-        );
-        w.push_word(Glue::nbspace(), Glue::space(),
-            w.output.measure(font, &self.0)
-        );
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
+        w.word(Atom {
+            left:   Glue::space(),
+            right:  Glue::nbspace(),
+            text:   "Error"
+        });
+        w.word(Atom {
+            left:   Glue::nbspace(),
+            right:  Glue::space(),
+            text:   &self.0
+        });
     }
 }
 
@@ -46,39 +50,63 @@ fn process_body(io: IoRef, env: GraphChain, childs: &[parser::Body]) -> P<NodeLi
     ))
 }
 
-#[derive(Debug)]
-pub enum Role {
-    Word,
-    Punctuation
+pub struct Word {
+    content:    InlinableString,
 }
-
-#[derive(Debug)]
-pub struct WordNode {
-    content:    String,
-    role:       Role
-}
-impl WordNode {
-    pub fn new(s: &str, r: Role) -> WordNode {
-        WordNode {
-            content:    s.to_string(),
-            role:       r
+impl Word {
+    pub fn new(s: &str) -> Word {
+        Word {
+            content:    s.into(),
         }
     }
 }
-impl Node for WordNode {
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
-        let (left, right) = match self.role {
-            Role::Word => (Glue::space(), Glue::space()),
-            Role::Punctuation => (Glue::None, Glue::space())
-        };
-        
-        let font = env.default_font().unwrap();
-        let word = Word {
+impl Node for Word {
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
+        env.hyphenate(w, Atom {
             text:   &self.content,
-            left:   left,
-            right:  right
-        };
-        env.hyphenate(w, font, word);
+            left:   Glue::space(),
+            right:  Glue::space()
+        });
+    }
+}
+
+pub struct Punctuation {
+    content:    InlinableString,
+}
+impl Punctuation {
+    pub fn new(s: &str) -> Punctuation {
+        Punctuation {
+            content:    s.into(),
+        }
+    }
+}
+impl Node for Punctuation {
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
+        w.word(Atom {
+            text:   &self.content,
+            left:   Glue::None,
+            right:  Glue::space()
+        });
+    }
+}
+
+pub struct Symbol {
+    content:    InlinableString,
+}
+impl Symbol {
+    pub fn new(s: &str) -> Symbol {
+        Symbol {
+            content:    s.into(),
+        }
+    }
+}
+impl Node for Symbol {
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
+        w.word(Atom {
+            text:   &self.content,
+            left:   Glue::space(),
+            right:  Glue::space()
+        });
     }
 }
 
@@ -98,16 +126,15 @@ fn item_node(io: IoRef, env: GraphChain, i: &parser::Item) -> NodeP {
     use parser::Item;
     
     match i {
-        &Item::Word(ref s) => P::new(Word::new(s, Role::Word)).into(),
-        &Item::Symbol(ref s) |
-        &Item::Punctuation(ref s) => P::new(Word::new(s, Role::Punctuation)).into(),
+        &Item::Word(ref s) => P::new(Word::new(s)).into(),
+        &Item::Symbol(ref s) => P::new(Symbol::new(s)).into(),
+        &Item::Punctuation(ref s) => P::new(Punctuation::new(s)).into(),
         &Item::Placeholder(ref v) => P::new(process_placeholder(env, v)).into(),
         &Item::Token(ref s) => P::new(TokenNode::from(env, s)).into(),
         &Item::Group(ref g) => Group::from(io, env, g).into()
     }
 }
 
-#[derive(Debug)]
 pub struct TokenNode {
   //  token:  TokenStream
 }
@@ -126,12 +153,11 @@ impl TokenNode {
     }
 }
 impl Node for TokenNode {
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
         //s.extend(&self.token);
     }
 }
 
-#[derive(Debug)]
 pub struct Group {
     target:     GroupRef,
     fields:     Fields
@@ -162,27 +188,33 @@ impl Node for Group {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.fields.childs(out)
     }
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
         if let Some(target) = self.target.get() {
             let field_link = env.link_fields(&self.fields);
             target.layout(env.with_fields(Some(&field_link)), w)
         } else {
-            let font = env.default_font().expect("no default font set");
             let open_close = self.target.key();
             
-            w.push_word(Glue::space(), Glue::None, w.output.measure(font, &open_close.0));
+            w.word(Atom {
+                left:   Glue::space(),
+                right:  Glue::None,
+                text:   &open_close.0
+            });
             
             match self.fields.args {
                 Some(ref n) => n.layout(env, w),
                 None => unreachable!()
             }
             
-            w.push_word(Glue::None, Glue::space(), w.output.measure(font, &open_close.1));
+            w.word(Atom {
+                left:   Glue::None,
+                right:  Glue::space(),
+                text:   &open_close.1
+            });
         }
     }
 }
-    
-#[derive(Debug)]
+
 pub struct Leaf {
     content: NodeList<NodeP>
 }
@@ -205,7 +237,7 @@ impl Node for Leaf {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.content.childs(out)
     }
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
         if self.content.size() > 0 {
             self.content.layout(env, w);
             w.promote(Glue::Newline { fill: true });
@@ -213,7 +245,6 @@ impl Node for Leaf {
     }
 }
 
-#[derive(Debug)]
 struct List {
     items: NodeList<P<Leaf>>
 }
@@ -231,10 +262,13 @@ impl Node for List {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.items.childs(out)
     }
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
         for item in self.items.iter() {
-            let font = env.default_font().expect("no default font set");
-            w.push_word(Glue::None, Glue::space(), w.output.measure(font, "· "));
+            w.word(Atom {
+                left:   Glue::None,
+                right:  Glue::nbspace(),
+                text:   "· "
+            });
         }
     }
 }
@@ -243,12 +277,14 @@ fn init_env(io: IoRef, env: GraphChain, body: &parser::BlockBody) -> LocalEnv {
     let mut local_env = LocalEnv::new();
     for cmd in body.commands.iter() {
         println!("command: {}", cmd.name);
+        /*
         match env.get_command(cmd.name) {
             Some(c) => {
                 c(io.clone(), env, &mut local_env, &cmd.args);
             },
             None => println!("command '{}' not found", cmd.name)
         }
+        */
     }
     for p in body.parameters.iter() {
         let d = P::new(Definition::from_param(io.clone(), env.link(&local_env), p));
@@ -257,7 +293,6 @@ fn init_env(io: IoRef, env: GraphChain, body: &parser::BlockBody) -> LocalEnv {
     local_env
 }
 
-#[derive(Debug)]
 pub struct Module {
     env:        LocalEnv,
     body:       NodeListP
@@ -265,7 +300,13 @@ pub struct Module {
 impl Module {
     pub fn parse(io: IoRef, env: GraphChain, input: &str) -> NodeP {
         use nom::IResult;
+        /*
+        #[cfg(debug_assertions)]
+        use slug;
         
+        #[cfg(debug_assertions)]
+        let input = slug::wrap(input);
+        */
         let body = match parser::block_body(input, 0) {
             IResult::Done(rem, b) => {
                 println!("{:?}", rem);
@@ -292,13 +333,14 @@ impl Node for Module {
         self.env.childs(out);
         self.body.childs(out);
     }
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
-        println!("Module::layout()");
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
         self.body.layout(env.link(&self.env), w)
+    }
+    fn env(&self) -> Option<&LocalEnv> {
+        Some(&self.env)
     }
 }
 
-#[derive(Debug)]
 pub struct Definition {
     // the name of the macro
     name:       String,
@@ -318,13 +360,15 @@ impl Node for Definition {
         out.push(self.args.clone().into());
         out.push(self.body.clone().into());
     }
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
-        println!("Definition::layout() {}", self.name);
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
         self.args.layout(env.link(&self.env), w);
         self.body.layout(env.link(&self.env), w);
     }
     fn add_ref(&self, source: &Rc<Node>) {
         self.references.borrow_mut().push(Rc::downgrade(source));
+    }
+    fn env(&self) -> Option<&LocalEnv> {
+        Some(&self.env)
     }
 }
 
@@ -351,7 +395,6 @@ impl Definition {
     }
 }
 
-#[derive(Debug)]
 pub struct Pattern {
     // the macro itself
     target: Ref,
@@ -394,15 +437,21 @@ impl Node for Pattern {
         self.env.childs(out);
         self.fields.childs(out);
     }
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
         if let Some(ref target) = self.target.get() {
             let field_link = env.link_fields(&self.fields);
             target.layout(env.link(&self.env).with_fields(Some(&field_link)), w);
         } else {
-            let font = env.default_font().expect("no default font set");
             for s in &["unresolved" as &str, "macro" as &str, self.target.name()] {
-                w.push_word(Glue::space(), Glue::space(), w.output.measure(font, s));
+                w.word(Atom {
+                    left:   Glue::space(),
+                    right:  Glue::space(),
+                    text:   s
+                });
             }
         }
+    }
+    fn env(&self) -> Option<&LocalEnv> {
+        Some(&self.env)
     }
 }

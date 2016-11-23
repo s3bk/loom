@@ -15,6 +15,10 @@ macro_rules! slug {
     ($($t:tt)*) => ()
 }
 
+//#[cfg(debug_assertions)]
+//type Data<'a> = slug::Slug<'a>;
+        
+//#[cfg(not(debug_assertions))]
 type Data<'a> = &'a str;
 
 #[macro_export]

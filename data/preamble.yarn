@@ -1,15 +1,7 @@
-/Big $args
-    !fontsize 30
-
-/big $args
-    !fontsize 25
-
-/small $args
-    !fontsize 16
-    $body
-
+   
 /chapter
-    :Big Chapter \hfill $args
+    @section_heading
+        Chapter \hfill $args
     
     $body \hfill
 
@@ -25,6 +17,8 @@
 
 /ref $args
 
+
+:Big => 
 
 Command lookup is done in the PathEnv
     

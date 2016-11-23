@@ -5,7 +5,7 @@ use std::fs;
 use std::collections::BTreeMap;
 use fst::{Map, MapBuilder};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Hyphen {
     pos:    u8
 }
@@ -33,7 +33,7 @@ impl Hyphen {
     }
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone)]
 pub struct Hyphens {
     data:   u64
 }
@@ -53,6 +53,9 @@ impl ops::ShlAssign<Hyphen> for Hyphens {
 impl Hyphens {
     pub fn iter(&self) -> HyphenIter {
         HyphenIter { data: self.data }
+    }
+    pub fn len(&self) -> usize {
+        self.iter().count()
     }
 }
 
@@ -78,7 +81,6 @@ pub struct Hyphenator {
     changes:    BTreeMap<String, Hyphens>
 }
 
-#[derive(Debug)]
 struct Entry {
     key:        String,
     value:      Hyphens

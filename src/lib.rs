@@ -4,7 +4,7 @@
 #![feature(box_syntax)]
 #![feature(custom_attribute)]
 
-#[macro_use] extern crate derivative;
+//#[macro_use] extern crate derivative;
 #[macro_use] extern crate nom;
 #[macro_use] extern crate itertools;
 extern crate unicode_categories;

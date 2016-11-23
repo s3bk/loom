@@ -3,12 +3,12 @@ use std::ops::Deref;
 use std::rc::Rc;
 use std::fmt::Debug;
 use std::cell::RefCell;
-use layout::{TokenStream};
-use environment::{LayoutEnv, LocalEnv, GraphChain, LayoutChain};
+use layout::{Atom, Glue, Writer, Flex};
+use environment::{LocalEnv, GraphChain};
 use io::{Stamp, IoRef};
 use woot::{WString, WStringIter};
 use inlinable_string::InlinableString;
-use output::{Output, Writer, Glue};
+use output::Output;
 
 /// The Document is a Directed Acyclic Graph.
 ///
@@ -34,10 +34,14 @@ pub trait Node {
     fn modified(&self) {}
     
     /// compute layout graph
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>);
+    fn layout(&self, env: GraphChain, w: &mut Writer);
     
     /// ?
     fn add_ref(&self, _: &Rc<Node>) {}
+    
+    fn env(&self) -> Option<&LocalEnv> {
+        None
+    }
 }
 
 pub struct P<N: ?Sized + Node> {
@@ -51,7 +55,7 @@ impl<N: ?Sized> Node for P<N> where N: Node {
     fn modified(&self) {
         self.rc.modified()
     }
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
         self.rc.layout(env, w)
     }
 }
@@ -98,7 +102,7 @@ pub enum Placeholder {
     Unknown(String)
 }
 impl Node for Placeholder {
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
         let fields = env.fields().unwrap();
         let n: Option<NodeP> = match self {
             &Placeholder::Body => fields.body().map(|n| n.into()),
@@ -110,15 +114,12 @@ impl Node for Placeholder {
         n.map(|n| n.layout(env.with_fields(fields.parent()), w))
         .unwrap_or_else(|| {
             println!("no macro set");
-            let o = w.output;
-            let f = env.default_font().unwrap();
-            let w = match self {
-                &Placeholder::Body => o.measure(f, "$body"),
-                &Placeholder::Argument(n) => o.measure(f, &format!("${}", n)),
-                &Placeholder::Arguments => o.measure(f, "$args"),
-                &Placeholder::Unknown(ref s) => o.measure(f, &format!("${}", s)),
-            };
-            w.push_word(Glue::space(), Glue::space(), w);
+            match self {
+                &Placeholder::Body => w.word(Atom::normal("$body")),
+                &Placeholder::Argument(n) => w.word(Atom::normal(&format!("${}", n))),
+                &Placeholder::Arguments => w.word(Atom::normal("$args")),
+                &Placeholder::Unknown(ref s) => w.word(Atom::normal(&format!("${}", s))),
+            }
         });
     }
 }
@@ -207,7 +208,7 @@ impl<T> Node for NodeList<T> where T: Node + Sized + Clone + Into<NodeP> {
             out.push(n.clone().into());
         }
     }
-    fn layout<O: Output>(&self, env: LayoutChain<O>, w: &mut Writer<O>) {
+    fn layout(&self, env: GraphChain, w: &mut Writer) {
         for n in self.iter() {
             n.layout(env, w);
         }

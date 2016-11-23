@@ -11,9 +11,9 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use woot::{WString, WStringIter, IncrementalStamper, Key};
 use document::{Node, NodeP};
-use layout::TokenStream;
-use environment::{LocalEnv, LayoutEnv, GraphChain, LayoutChain, prepare_graph};
-use output::{Output, Writer};
+use layout::Writer;
+use environment::{LocalEnv, GraphChain, prepare_graph};
+use output::Output;
 
 pub use rmp_serialize::{Encoder, Decoder};
 
@@ -192,11 +192,10 @@ impl IoMachine {
         self.active = Some((root, env));
     }
     
-    pub fn layout<O: Output>(&self, w: &mut Writer<O>) {
-        let layout_env = LayoutEnv::new();
+    pub fn layout<W: Writer>(&self, w: &mut W) {
         match self.active {
             Some((ref root, ref env)) =>
-                root.layout(LayoutChain::root(env, layout_env), w),
+                root.layout(GraphChain::root(env), w),
             None => {}
         }
     }
