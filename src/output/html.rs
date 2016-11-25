@@ -50,11 +50,11 @@ impl HtmlOutput {
             "layout([\n{}\n]);\n",
             stream.iter().map(|item| {
                 match item {
-                    &StreamItem::Word(ref w) => format!("  [0, {:?}]", w.s),
-                    &StreamItem::Linebreak(f) => format!("  [1, {:?}]", f),
-                    &StreamItem::Space(b, m) => format!("  [2, {:?}, {}]", b, m),
+                    &StreamItem::Word(ref w)    => format!("  [0, {:?}]", w.s),
+                    &StreamItem::Linebreak(f)   => format!("  [1, {:?}]", f),
+                    &StreamItem::Space(b, m)    => format!("  [2, {:?}, {}]", b, m),
                     &StreamItem::BranchEntry(s) => format!("  [3, {}]", s),
-                    &StreamItem::BranchExit(s) => format!("  [4, {:?}]", s),
+                    &StreamItem::BranchExit(s)  => format!("  [4, {:?}]", s),
                 }
             }).join(",\n")
         );

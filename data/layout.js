@@ -80,9 +80,9 @@ function update_layout() {
                 {
                     let width = space_width * scale;
                     return {
-                        shrink:     width * config.space_shrink,
+                        shrink:     width * config.space_width * config.space_shrink,
                         width:      width * config.space_width,
-                        stretch:    width * config.space_stretch,
+                        stretch:    width * config.space_width * config.space_stretch,
                         height:     0.
                     };
                 },
@@ -177,14 +177,17 @@ function run(self) {
         
     while (last > 0) {
         let b = nodes[last];
+        if (b == undefined) {
+            console.error();
+        }
         steps.push([b, last-1]);
         last = b.prev;
     }
-        
     let lines = [];
     for (var step of steps.reverse()) {
         let b = step[0];
         let end = step[1];
+        console.log(b, end);
         
         let measure = {
             shrink:     0.,
@@ -210,15 +213,15 @@ function run(self) {
                     measure = measure_add(measure, self.space(s));
                     break;
                 
-                case 2: // BranchEntry
+                case 3: // BranchEntry
                     let len = node[1];
-                    if (b.path & (1<<branches) == 0) {
+                    if ((b.path & (1<<branches)) == 0) {
                         pos += len;
                     }
                     branches += 1;
                     break;
                 
-                case 3: // BranchExit
+                case 4: // BranchExit
                     let skip = node[1];
                     pos += skip;
                     break;
@@ -272,14 +275,15 @@ function complete_line(self, nodes, c) {
                 }
                 return last;
             
-            case 2: // BranchEntry
+            case 3: // BranchEntry
+                let len = item[1];
                 let b_last = complete_line(self, nodes, {
                     pos:        n + 1,
                     path:       c.path | (1 << c.branches),
                     branches:   c.branches + 1,
-                    score:      b.score,
-                    begin:      start,
-                    measure:    measure
+                    score:      c.score,
+                    begin:      c.begin,
+                    measure:    c.measure
                 });
                 last = max(last, b_last);
                 
@@ -287,7 +291,7 @@ function complete_line(self, nodes, c) {
                 c.branches += 1;
                 break;
             
-            case 3: // BranchExit
+            case 4: // BranchExit
                 let skip = item[1];
                 c.pos += skip;
                 break;
@@ -305,8 +309,8 @@ function complete_line(self, nodes, c) {
 
 
 function maybe_update(self, c, nodes, index) {
-    let m = c.measure;
     let width = self.width;
+    let m = c.measure;
     
     if (width < m.shrink) {
         return false;
