@@ -3,7 +3,7 @@ use io::IoRef;
 use std::error::Error;
 use std::fmt::{self, Display};
 use output::Output;
-use layout::{Word, Glue, Writer, Flex};
+use layout::{Glue, Writer, Flex};
 use std;
 
 pub fn register(env: &mut LocalEnv) {

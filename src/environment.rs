@@ -213,6 +213,16 @@ impl<'a> GraphChain<'a> {
             }
         }
     }
+
+    pub fn get_command(&self, name: &str) -> Option<&Command> {
+        match self.local.commands.get(name) {
+            Some(t) => Some(t),
+            None => match self.parent {
+                Some(p) => p.get_command(name),
+                None => None
+            }
+        }
+    }    
 }   
 
 pub fn prepare_graph() -> LocalEnv {

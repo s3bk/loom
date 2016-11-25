@@ -265,10 +265,12 @@ impl Node for List {
     fn layout(&self, env: GraphChain, w: &mut Writer) {
         for item in self.items.iter() {
             w.word(Atom {
-                left:   Glue::None,
+                left:   Glue::space(),
                 right:  Glue::nbspace(),
                 text:   "· "
             });
+            item.layout(env, w);
+            w.promote(Glue::hfill());
         }
     }
 }
@@ -277,14 +279,14 @@ fn init_env(io: IoRef, env: GraphChain, body: &parser::BlockBody) -> LocalEnv {
     let mut local_env = LocalEnv::new();
     for cmd in body.commands.iter() {
         println!("command: {}", cmd.name);
-        /*
+        
         match env.get_command(cmd.name) {
             Some(c) => {
                 c(io.clone(), env, &mut local_env, &cmd.args);
             },
             None => println!("command '{}' not found", cmd.name)
         }
-        */
+        
     }
     for p in body.parameters.iter() {
         let d = P::new(Definition::from_param(io.clone(), env.link(&local_env), p));

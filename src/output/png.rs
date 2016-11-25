@@ -1,4 +1,4 @@
-use layout::{Flex, FlexMeasure, ParagraphLayout, StreamVec, Word};
+use layout::{Flex, FlexMeasure, ParagraphLayout, StreamVec};
 use image::{GrayImage, Luma};
 use std::collections::HashMap;
 use std::error::Error;
@@ -52,9 +52,6 @@ impl RustTypeFont {
         self.cache.borrow_mut().insert(word.to_owned(), w.clone());
         w
     }
-    fn space(&self) -> FlexMeasure {
-        self.measure(" ").flex(0.)
-    }
 }
 
 struct RustTypeWordInner {
@@ -68,7 +65,11 @@ struct RustTypeWordInner {
 pub struct RustTypeWord {
     inner:  Rc<RustTypeWordInner>
 }
-
+impl Debug for RustTypeWord {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.inner.text)
+    }
+}
 fn saturate(pixel: &mut Luma<u8>, increment: u8) {
     let ref mut v = pixel.data[0];
     *v = v.saturating_sub(increment);
@@ -111,12 +112,6 @@ impl Flex for RustTypeWord {
         m.line_gap + m.ascent - m.descent
     }
 }
-impl Debug for RustTypeWord {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "RustTypeWord \"{}\"", self.inner.text)
-    }
-}
-impl Word for RustTypeWord {}
 impl RustTypeWord {
     fn draw_at(&self, image: &mut GrayImage, pos: (f32, f32)) {
         self.inner.draw_at(image, pos);
@@ -133,7 +128,9 @@ impl PngOutput {
         PngOutput {}
     }
     
-    pub fn render(&mut self, stream: &StreamVec<RustTypeWord>, width: f32) -> GrayImage {
+    pub fn render(&mut self, stream: &StreamVec<RustTypeWord, FlexMeasure>, width: f32)
+     -> GrayImage
+    {
         use std::time::SystemTime;
         
         fn m(label: &str, t0: SystemTime, t1: SystemTime) {
@@ -145,7 +142,7 @@ impl PngOutput {
         let margin_v = 10.0;
         let margin_h = 10.0;
         
-        let lines = ParagraphLayout::<PngOutput>::new(stream, width).run();
+        let lines = ParagraphLayout::new(stream, width).run();
         let height: f32 = lines.iter().map(|l| l.height).sum();
         let mut image = GrayImage::from_pixel(
             (width + 2. * margin_h) as u32,
@@ -173,9 +170,14 @@ impl PngOutput {
 impl Output for PngOutput {
     type Word = RustTypeWord;
     type Font = RustTypeFont;
+    type Measure = FlexMeasure;
     
     fn measure(font: &RustTypeFont, word: &str) -> RustTypeWord {
         font.measure(word)
+    }
+    
+    fn measure_space(font: &RustTypeFont, scale: f32) -> FlexMeasure {
+        font.measure(" ").flex(2.0) * scale
     }
     
     fn default_font(&mut self) -> RustTypeFont {
@@ -189,6 +191,8 @@ impl Output for PngOutput {
     }
 }
 impl VectorOutput for PngOutput {
+    type MeasureV = FlexMeasure;
+    type WordV = RustTypeWord;
     type UnscaledFont = UnscaledRustTypeFont;
     
     fn scale(&self, font: &UnscaledRustTypeFont, size: f32) -> RustTypeFont {

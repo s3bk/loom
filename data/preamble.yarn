@@ -1,7 +1,5 @@
-   
 /chapter
-    @section_heading
-        Chapter \hfill $args
+    Chapter \hfill $args
     
     $body \hfill
 
@@ -16,9 +14,6 @@
     $body \hfill
 
 /ref $args
-
-
-:Big => 
 
 Command lookup is done in the PathEnv
     

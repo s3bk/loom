@@ -9,8 +9,7 @@
 #[macro_use] extern crate itertools;
 extern crate unicode_categories;
 extern crate unicode_brackets;
-extern crate rusttype;
-extern crate image;
+
 extern crate roman;
 extern crate fst;
 extern crate rmp;
@@ -23,6 +22,13 @@ extern crate futures;
 extern crate curl;
 extern crate inlinable_string;
 extern crate ordermap;
+
+#[cfg(feature = "output_png")]
+extern crate image;
+#[cfg(feature = "output_png")]
+extern crate rusttype;
+
+#[cfg(feature = "output_pdf")]
 extern crate pdf;
 
 pub mod blocks;

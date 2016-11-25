@@ -1,5 +1,7 @@
 use layout::{StreamItem, StreamVec, FlexMeasure, Flex};
-use output::Output;
+use output::{Output, VectorOutput};
+use std::clone::Clone;
+use std::fmt::Debug;
 
 #[derive(Copy, Clone, Debug, Default)]
 struct LineBreak {
@@ -10,12 +12,12 @@ struct LineBreak {
 }
 type Entry = Option<LineBreak>;
 
-pub struct ParagraphLayout<'a, O: Output + 'a> {
-    items:      &'a StreamVec<O::Word>,
+pub struct ParagraphLayout<'a, W: 'a, M: 'a> {
+    items:      &'a StreamVec<W, M>,
     width:      f32,
 }
-pub struct Line<O: Output> {
-    pub words:  Vec<(O::Word, f32)>,
+pub struct Line<Word> {
+    pub words:  Vec<(Word, f32)>,
     pub height: f32
 }
 
@@ -28,15 +30,17 @@ struct LineContext {
     branches:   u8 // number of branches so far (<= 64)
 }
 
-impl<'a, O> ParagraphLayout<'a, O> where O: Output {
-    pub fn new(s: &'a StreamVec<O::Word>, width: f32) -> ParagraphLayout<'a, O> {
+impl<'a, W: Flex + Debug + Clone, M: Flex + Debug + Clone> ParagraphLayout<'a, W, M>  {
+    pub fn new(s: &'a StreamVec<W, M>, width: f32)
+     -> ParagraphLayout<'a, W, M>
+    {
         ParagraphLayout {
             items: s,
             width: width
         }
     }
     
-    pub fn run(&mut self) -> Vec<Line<O>> {
+    pub fn run(&mut self) -> Vec<Line<W>> {
         use std::iter::repeat;
         
         let limit = self.items.len();
@@ -63,14 +67,14 @@ impl<'a, O> ParagraphLayout<'a, O> where O: Output {
                 None => {}
             }
         }
-        /*
+        
         for (n, node) in nodes.iter().take(limit).enumerate() {
             println!("{:4}  {:?}", n, node);
             println!("      {:?}", self.items[n]);
         }
         println!("{:4}  {:?}", limit, nodes[limit]);
         println!("last: {}", last);
-        */
+        
         if last == 0 {
             return vec![];
         }
@@ -104,7 +108,7 @@ impl<'a, O> ParagraphLayout<'a, O> where O: Output {
                         words.push((w, x));
                     },
                     StreamItem::Space(_, s) => {
-                        measure += s;
+                        measure += s.measure(self.width);
                     },
                     StreamItem::BranchEntry(len) => {
                         if b.path & (1<<branches) == 0 {
@@ -140,7 +144,7 @@ impl<'a, O> ParagraphLayout<'a, O> where O: Output {
                 &StreamItem::Word(ref w) => {
                     c.measure += w.measure(self.width);
                 },
-                &StreamItem::Space(breaking, s) => {
+                &StreamItem::Space(breaking, ref s) => {
                     if breaking {
                         // breaking case:
                         // width is not added yet!
@@ -150,7 +154,7 @@ impl<'a, O> ParagraphLayout<'a, O> where O: Output {
                     }
                     
                     // add width now.
-                    c.measure += s;
+                    c.measure += s.measure(self.width);
                 }
                 &StreamItem::Linebreak(fill) => {
                     if fill {
@@ -205,13 +209,21 @@ impl<'a, O> ParagraphLayout<'a, O> where O: Output {
         let width = self.width;
         let ref m = c.measure;
         
-        if width < m.shrink || m.stretch <= m.width {
+        if width < m.shrink {
             return false;
         }
-    
-        let delta = width - m.width; // d > 0 => stretch, d < 0 => shrink
-        let factor = delta / (if delta >= 0. { m.stretch - m.width } else { m.width - m.shrink });
         
+        let factor = if width == m.width {
+            1.0
+        } else {
+            let delta = width - m.width; // d > 0 => stretch, d < 0 => shrink
+            let diff = if delta >= 0. {
+                m.stretch - m.width
+            } else {
+                m.width - m.shrink
+            };
+            delta / diff
+        };
         let break_score = c.score - factor * factor;
         match *node {
             None => {

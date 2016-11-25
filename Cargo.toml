@@ -3,10 +3,16 @@ name = "loom"
 version = "0.1.0"
 authors = ["Sebastian Köln <sebk@rynx.org>"]
 
+[features]
+default = ["output_png", "output_html"]
+output_png = ["image", "rusttype"]
+output_pdf = ["pdf"]
+output_html = []
+
+
 [dependencies]
 unicode_categories = "*"
 unicode-brackets = "*"
-rusttype = "*"
 roman = "*"
 fst = "*"
 rmp = "*"
@@ -22,12 +28,20 @@ futures = "*"
 curl = "*"
 inlinable_string = "*"
 ordermap = { git="https://github.com/bluss/ordermap" }
-pdf = "*"
+
+[dependencies.rusttype]
+version = "*"
+optional = true
+
+[dependencies.pdf]
+version = "*"
+optional = true
 
 [dependencies.image]
 default-features = false
 features = ["png_codec"]
 version = "0.10.3"
+optional = true
 
 [dependencies.nom]
 git = "https://github.com/Geal/nom.git"
@@ -40,7 +54,7 @@ git = "https://github.com/s3bk/woot.git"
 #path = "../woot"
 
 [[bin]]
-name = "render_image"
+name = "render"
 
 [[bin]]
 name = "hyphen_import"

@@ -81,9 +81,28 @@ impl Mul<f32> for FlexMeasure {
         }        
     }
 }
+impl Flex for FlexMeasure {
+    fn stretch(&self, _: f32) -> f32 { self.stretch }
+    fn shrink(&self, _: f32) -> f32 { self.shrink }
+    fn width(&self, _: f32) -> f32 { self.width }
+    fn height(&self, _: f32) -> f32 { self.height }
+    
+    fn measure(&self, _: f32) -> FlexMeasure {
+        *self
+    }
+    
+    fn flex(&self, _: f32) -> FlexMeasure {
+        FlexMeasure {
+            width: self.width,
+            shrink: self.shrink,
+            stretch: self.stretch,
+            height: self.height
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
-pub enum StreamItem<W: Clone + Flex> {
+pub enum StreamItem<W, M> {
     /// A single word (sequence of glyphs)
     Word(W),
     
@@ -91,7 +110,7 @@ pub enum StreamItem<W: Clone + Flex> {
     Linebreak(bool),
     
     /// (breaking, measure)
-    Space(bool, FlexMeasure),
+    Space(bool, M),
     
     /// Somtimes there are different possiblites of representing something.
     /// A Branch solves this by splitting the stream in two parts.
@@ -112,8 +131,7 @@ pub enum StreamItem<W: Clone + Flex> {
     BranchExit(usize)
 }
 
-pub type StreamVec<W: Word> = Vec<StreamItem<W>>;
-pub trait Word: Flex + Clone {}
+pub type StreamVec<Word, Measure> = Vec<StreamItem<Word, Measure>>;
 
 #[derive(Copy, Clone)]
 pub struct Atom<'a> {

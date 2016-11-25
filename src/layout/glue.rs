@@ -72,6 +72,9 @@ impl Glue {
     pub fn newline() -> Glue {
         Glue::Newline { fill: false }
     }
+    pub fn hfill() -> Glue {
+        Glue::Newline { fill: true }
+    }
 }
 pub struct Word<'a> {
     text:   &'a str,
