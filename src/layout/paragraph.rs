@@ -48,9 +48,8 @@ impl<'a, W: Flex + Debug + Clone, M: Flex + Debug + Clone> ParagraphLayout<'a, W
         nodes[0] = Some(LineBreak::default());
         let mut last = 0;
         
-        for start in 0 .. limit {  
-            let node = nodes[start];
-            match node {
+        for start in 0 .. limit {
+            match nodes[start] {
                 Some(b) => {
                     last = self.complete_line(
                         &mut nodes,

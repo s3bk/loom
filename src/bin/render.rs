@@ -29,7 +29,7 @@ fn make_pdf(io: &IoMachine, path: &Path) {
 
 #[cfg(feature = "output_html")]
 fn make_html(io: &IoMachine, path: &Path) {
-    let mut output = HtmlOutput::new(&path.with_extension("html"));
+    let mut output = HtmlOutput::new(&path.with_extension("js"));
     let mut w: GenericWriter<HtmlOutput> = GenericWriter::new(output.default_font());
     
     io.layout(&mut w);

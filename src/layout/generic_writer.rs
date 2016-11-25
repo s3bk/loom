@@ -114,7 +114,6 @@ impl<O: Output> Writer for GenericWriter<O> {
 
     #[inline(always)]
     fn word(&mut self, word: Atom) {
-        println!("{}", word.text);
         self.push(word.left, word.right, move |s, f|
             s.push(StreamItem::Word(O::measure(f, word.text)))
         );

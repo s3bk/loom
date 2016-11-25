@@ -44,22 +44,19 @@ impl HtmlOutput {
     }
 
     pub fn render(&mut self, stream: &StreamVec<HtmlWord, f32>) {
-        write!(self.file, "\
-<html>
-    <body>
-        <section id=\"target\">
-        <section id=\"source\">");
-        for item in stream.iter() {
-            match item {
-                &StreamItem::Word(ref w) => {
-                    write!(self.file, "<word>{}</word>", w.s);
+        use itertools::Itertools;
+        write!(
+            self.file,
+            "layout([\n{}\n]);\n",
+            stream.iter().map(|item| {
+                match item {
+                    &StreamItem::Word(ref w) => format!("  [0, {:?}]", w.s),
+                    &StreamItem::Linebreak(f) => format!("  [1, {:?}]", f),
+                    &StreamItem::Space(b, m) => format!("  [2, {:?}, {}]", b, m),
+                    &StreamItem::BranchEntry(s) => format!("  [3, {}]", s),
+                    &StreamItem::BranchExit(s) => format!("  [4, {:?}]", s),
                 }
-                _ => {}
-            }
-        }
-        write!(self.file, "</section>
-    </body>
-</html>
-"       );
+            }).join(",\n")
+        );
     }
 }
