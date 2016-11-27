@@ -29,7 +29,12 @@ document.addEventListener("DOMContentLoaded", function() {
     update_layout();
 }, true);
 
-function add_control(p, name, min, max, step, callback) {
+function add_control(dl, name, min, max, step, callback) {
+    let dt = document.createElement("dt");
+    dt.appendChild(document.createTextNode(name));
+    dl.appendChild(dt);
+    
+    let dd = document.createElement("dd");
     let i = document.createElement("input");
     i.setAttribute("type", "range");
     i.setAttribute("min",  min);
@@ -47,11 +52,13 @@ function add_control(p, name, min, max, step, callback) {
         let v = e.target.value;
         config[name] = v;
         localStorage[name] = v;
+        e.target.setAttribute("value", v);
         console.log(name, "=", v);
         if (callback != undefined) callback(v);
         update_layout();
     }, false);
-    p.appendChild(i);
+    dd.appendChild(i);
+    dl.appendChild(dd);
 }
 function update_layout() {
     let items = layout_items;

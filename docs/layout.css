@@ -1,9 +1,9 @@
-div#controls {
+#controls {
     display: flex;
     flex-direction: column;
     width: 10em;
 }
-div#controls input[type="range"]::after {
+#controls input[type="range"]::after {
     content: attr(value);
 }
 div#content {
