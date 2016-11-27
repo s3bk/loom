@@ -3,7 +3,9 @@ div#controls {
     flex-direction: column;
     width: 10em;
 }
-
+div#controls input[type="range"]::after {
+    content: attr(value);
+}
 div#content {
     align-items: center;
     flex-direction: column;
@@ -18,6 +20,7 @@ line {
     display: block;
     position: absolute;
 }
+
 line > span {
     position: absolute;
 }

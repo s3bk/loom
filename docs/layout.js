@@ -10,6 +10,12 @@ let config = {
     space_stretch:  2.0,
     text_width:     30
 };
+
+let display_state = {
+    cache: {},
+    time:   0
+};
+
 document.addEventListener("DOMContentLoaded", function() {
     let p = document.getElementById("controls");
     
@@ -54,31 +60,39 @@ function update_layout() {
     while (parent.firstChild) {
         parent.removeChild(parent.firstChild);
     }
-    
-    let space = document.createElement("span");
-    space.innerHTML = "&nbsp;";
-    parent.appendChild(space);
-    let space_width = space.getBoundingClientRect().width;
-    parent.removeChild(space);
+    let cache = display_state.cache;
+    if (cache.space_width == undefined) {
+        let s = document.createElement("span");
+        s.innerHTML = "&nbsp;";
+        parent.appendChild(s);
+        cache.space_width = s.getBoundingClientRect().width;
+        parent.removeChild(s);
+    }
     
     let context = {
         word:   function(word)
                 {
-                    let span = document.createElement("span");
-                    span.appendChild(document.createTextNode(word));
-                    parent.appendChild(span);
-                    let rect = span.getBoundingClientRect();
-                    parent.removeChild(span);
-                    return {
-                        shrink:     rect.width,
-                        width:      rect.width,
-                        stretch:    rect.width,
-                        height:     rect.height
-                    };
+                    let measure = cache[word];
+                    if (measure == undefined) {
+                        let span = document.createElement("span");
+                        span.appendChild(document.createTextNode(word));
+                        parent.appendChild(span);
+                        let rect = span.getBoundingClientRect();
+                        parent.removeChild(span);
+                        
+                        measure = {
+                            shrink:     rect.width,
+                            width:      rect.width,
+                            stretch:    rect.width,
+                            height:     rect.height
+                        };
+                        cache[word] = measure;
+                    }
+                    return measure
                 },
         space:  function(scale)
                 {
-                    let width = space_width * scale;
+                    let width = cache.space_width * scale;
                     return {
                         shrink:     width * config.space_width * config.space_shrink,
                         width:      width * config.space_width,
@@ -91,26 +105,13 @@ function update_layout() {
     };
     
     let lines = run(context);
-    let y = 0.;
-    for (var line of lines) {
-        let lineElement = document.createElement("line");
-        lineElement.style.top = y + "px";
-        
-        let height = line[0];
-        let words = line[1];
-        for (var word of words) {
-            let text = word[0];
-            let x = word[1];
-            
-            let wordElement = document.createElement("span");
-            wordElement.appendChild(document.createTextNode(text));
-            wordElement.style.left = x + "px";
-            lineElement.appendChild(wordElement);
-        }
-        y += height;
-        
-        parent.appendChild(lineElement);
-    }
+    display_state.lines = lines;
+    display_state.line = 0;
+    display_state.y = 0.;
+    display_state.target = parent;
+    display_state.time = new Date();
+    
+    window.setTimeout(show_line, 1);
 }
 
 function max(a, b) {
@@ -135,13 +136,6 @@ function measure_add(a, b) {
         stretch:    a.stretch + b.stretch,
         height: max(a.height,   b.height)
     };
-}
-
-function measure_word(word) {
-    
-}
-function measure_space(scale) {
-    
 }
 
 function run(self) {
@@ -187,7 +181,6 @@ function run(self) {
     for (var step of steps.reverse()) {
         let b = step[0];
         let end = step[1];
-        console.log(b, end);
         
         let measure = {
             shrink:     0.,
@@ -347,4 +340,38 @@ function maybe_update(self, c, nodes, index) {
         };
     }
     return true;
+}
+
+function show_line() {
+    do {
+        var line = display_state.lines[display_state.line];
+        
+        let lineElement = document.createElement("line");
+        lineElement.style.top = display_state.y + "px";
+        
+        let height = line[0];
+        let words = line[1];
+        for (var word of words) {
+            let text = word[0];
+            let x = word[1];
+            
+            let wordElement = document.createElement("span");
+            wordElement.appendChild(document.createTextNode(text));
+            wordElement.style.left = x + "px";
+            lineElement.appendChild(wordElement);
+        }
+        display_state.y += height;
+        
+        display_state.target.appendChild(lineElement);
+        
+        display_state.line += 1;
+        
+        let time = new Date();
+        let dt = time - display_state.time;
+        if (dt > 20.) {
+            display_state.time = time;
+            window.setTimeout(show_line, 0);
+            break;
+        }
+    } while (display_state.line < display_state.lines.length)
 }
