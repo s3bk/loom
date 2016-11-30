@@ -8,7 +8,7 @@ let config = {
     space_shrink:   0.5,
     space_width:    1.0,
     space_stretch:  2.0,
-    text_width:     30
+    text_width:     50
 };
 
 let display_state = {
@@ -22,8 +22,8 @@ document.addEventListener("DOMContentLoaded", function() {
     add_control(p, "space_shrink", 0.2, 1.0, 0.05);
     add_control(p, "space_width", 0.6, 2.0, 0.2);
     add_control(p, "space_stretch", 1.0, 5.0, 0.25);
-    add_control(p, "text_width", 10, 60, 1, function(v) {
-        document.getElementById("target").style.width = v + "em";
+    add_control(p, "text_width", 0, 100, 1, function(v) {
+        document.getElementById("target").style.width = v + "vw";
     });
     
     update_layout();

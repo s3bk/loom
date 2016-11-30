@@ -1,7 +1,23 @@
+#control-box {
+    position: fixed;
+    left: 0;
+    width: 1em;
+    background-color: lightblue;
+}
+#control-box::before {
+    content: "⚙";
+}
 #controls {
-    display: flex;
-    flex-direction: column;
-    width: 10em;
+    background-color: lightblue;
+    opacity: 0;
+    transition: opacity 1s;
+    width: auto;
+    display: inline-block;
+    margin: 0;
+    padding-left: 1em;
+}
+#controls:hover {
+    opacity: 1;
 }
 #controls input[type="range"]::after {
     content: attr(value);
