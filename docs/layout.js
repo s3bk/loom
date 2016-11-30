@@ -51,7 +51,7 @@ let config = {
     text_width:     50
 };
 
-document.addEventListener("onpopstate", function(state) {
+document.addEventListener("popstate", function(state) {
     config = state;
     update_layout();
 }, true);
