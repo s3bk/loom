@@ -23,25 +23,26 @@ function layout(items) {
     layout_items = items;
 }
 
-function config_from_hash(s) {
-    let parts = s.split("#");
-    for (var part of parts) {
-        let p = part.split("=");
-        if (p.length == 2) {
-            let v = p[1] + 0.0;
+function config_from_hash() {
+    let s = document.location.hash.split("#")[1];
+    if (s != undefined) {
+        let parts = s.split("|");
+        let index = 0;
+        for (var key in config) {
+            let v = parseFloat(parts[index++]);
             if (v != undefined) {
-                config[p[0]]
+                update_control(key, v);
             }
         }
     }
 }
 function update_history() {
-    let hash = "";
+    let keys = [];
     for (var key in config) {
-        hash += "#" + key + "=" + config[key];
+        keys.push(config[key]);
     }
     let location = document.location;
-    location.hash = hash;
+    location.hash = "#" + keys.join("|");
     history.replaceState(config, document.title, location);
 }
 let config = {
@@ -50,9 +51,16 @@ let config = {
     space_stretch:  2.0,
     text_width:     50
 };
-
-document.addEventListener("popstate", function(state) {
-    config = state;
+/*
+window.addEventListener("popstate", function(event) {
+    if (event.state) {
+        config = event.state;
+        update_layout();
+    }
+}, true);
+*/
+window.addEventListener("hashchange", function(event) {
+    config_from_hash();
     update_layout();
 }, true);
 
@@ -63,7 +71,6 @@ let display_state = {
 };
 
 document.addEventListener("DOMContentLoaded", function() {
-    config_from_hash(document.location.hash);
     
     let p = document.getElementById("controls");
     
@@ -74,9 +81,25 @@ document.addEventListener("DOMContentLoaded", function() {
         document.getElementById("target").style.width = v + "vw";
     });
     
+    config_from_hash();
     update_layout();
 }, true);
 
+function update_control(name, value) {
+    let c = controls[name];
+    c.input.setAttribute("value", value);
+    config[name] = value;
+    if (c.callback != undefined) c.callback(value);
+}
+function control_updated(e) {
+    let name = e.target.getAttribute("name");
+    let value = e.target.value;
+    
+    update_control(name, value)
+    update_layout();
+    update_history();
+}
+let controls = {};
 function add_control(dl, name, min, max, step, callback) {
     let dt = document.createElement("dt");
     dt.appendChild(document.createTextNode(name));
@@ -88,22 +111,21 @@ function add_control(dl, name, min, max, step, callback) {
     i.setAttribute("min",  min);
     i.setAttribute("max", max);
     i.setAttribute("step", step);
+    i.setAttribute("name", name);
     
     let value = config[name];
     i.setAttribute("value", value);
     if (callback != undefined) callback(value);
     
-    i.addEventListener("input", function(e) {
-        let v = e.target.value;
-        config[name] = v;
-        e.target.setAttribute("value", v);
-        console.log(name, "=", v);
-        if (callback != undefined) callback(v);
-        update_layout();
-        update_history();
-    }, false);
+    i.addEventListener("input", control_updated, false);
+    
     dd.appendChild(i);
     dl.appendChild(dd);
+    controls[name] = {
+        name:       name,
+        input:      i,
+        callback:   callback
+    };
 }
 function update_layout() {
     let items = layout_items;
