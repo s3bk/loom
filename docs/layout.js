@@ -1,9 +1,49 @@
+class LoomLine extends HTMLElement {
+    constructor(y) {
+        super();
+        this._y = y;
+    }
+
+    static get observedAttributes() { return ["y"]; }
+}
+customElements.define("loom-line", LoomLine);
+
+class LoomWord extends HTMLElement {
+    constructor() {
+        super();
+    }
+
+    static get observedAttributes() { return []; }
+}
+customElements.define("loom-word", LoomWord);
+
 let layout_items;
 
 function layout(items) {
     layout_items = items;
 }
 
+function config_from_hash(s) {
+    let parts = s.split("#");
+    for (var part of parts) {
+        let p = part.split("=");
+        if (p.length == 2) {
+            let v = p[1] + 0.0;
+            if (v != undefined) {
+                config[p[0]]
+            }
+        }
+    }
+}
+function update_history() {
+    let hash = "";
+    for (var key in config) {
+        hash += "#" + key + "=" + config[key];
+    }
+    let location = document.location;
+    location.hash = hash;
+    history.replaceState(config, document.title, location);
+}
 let config = {
     space_shrink:   0.5,
     space_width:    1.0,
@@ -11,12 +51,20 @@ let config = {
     text_width:     50
 };
 
+document.addEventListener("onpopstate", function(state) {
+    config = state;
+    update_layout();
+}, true);
+
 let display_state = {
-    cache: {},
-    time:   0
+    cache:      {},
+    time:       0,
+    timeout:    null
 };
 
 document.addEventListener("DOMContentLoaded", function() {
+    config_from_hash(document.location.hash);
+    
     let p = document.getElementById("controls");
     
     add_control(p, "space_shrink", 0.2, 1.0, 0.05);
@@ -41,21 +89,18 @@ function add_control(dl, name, min, max, step, callback) {
     i.setAttribute("max", max);
     i.setAttribute("step", step);
     
-    let value = localStorage[name];
-    if (value != undefined) {
-        i.setAttribute("value", value);
-        config[name] = value;
-        if (callback != undefined) callback(value);
-    }
+    let value = config[name];
+    i.setAttribute("value", value);
+    if (callback != undefined) callback(value);
     
     i.addEventListener("input", function(e) {
         let v = e.target.value;
         config[name] = v;
-        localStorage[name] = v;
         e.target.setAttribute("value", v);
         console.log(name, "=", v);
         if (callback != undefined) callback(v);
         update_layout();
+        update_history();
     }, false);
     dd.appendChild(i);
     dl.appendChild(dd);
@@ -68,24 +113,28 @@ function update_layout() {
         parent.removeChild(parent.firstChild);
     }
     let cache = display_state.cache;
+    
+    let test_line = new LoomLine();
+    parent.appendChild(test_line);
+    
     if (cache.space_width == undefined) {
         let s = document.createElement("span");
         s.innerHTML = "&nbsp;";
-        parent.appendChild(s);
+        test_line.appendChild(s);
         cache.space_width = s.getBoundingClientRect().width;
-        parent.removeChild(s);
+        test_line.removeChild(s);
     }
     
     let context = {
-        word:   function(word)
+        word:   function(text)
                 {
-                    let measure = cache[word];
+                    let measure = cache[text];
                     if (measure == undefined) {
-                        let span = document.createElement("span");
-                        span.appendChild(document.createTextNode(word));
-                        parent.appendChild(span);
-                        let rect = span.getBoundingClientRect();
-                        parent.removeChild(span);
+                        let word = new LoomWord();
+                        word.appendChild(document.createTextNode(text));
+                        test_line.appendChild(word);
+                        let rect = word.getBoundingClientRect();
+                        test_line.removeChild(word);
                         
                         measure = {
                             shrink:     rect.width,
@@ -93,7 +142,7 @@ function update_layout() {
                             stretch:    rect.width,
                             height:     rect.height
                         };
-                        cache[word] = measure;
+                        cache[text] = measure;
                     }
                     return measure
                 },
@@ -107,18 +156,22 @@ function update_layout() {
                         height:     0.
                     };
                 },
-        width:  parent.getBoundingClientRect().width,
+        width:  test_line.getBoundingClientRect().width,
         items:  items
     };
     
     let lines = run(context);
-    display_state.lines = lines;
-    display_state.line = 0;
-    display_state.y = 0.;
-    display_state.target = parent;
-    display_state.time = new Date();
-    
-    window.setTimeout(show_line, 1);
+    if (lines.length) {
+        display_state.lines = lines;
+        display_state.line = 0;
+        display_state.y = 0.;
+        display_state.target = parent;
+        display_state.time = new Date();
+        
+        if (display_state.timeout == null) {
+            display_state.timeout = window.setTimeout(show_line, 1);
+        }
+    }
 }
 
 function max(a, b) {
@@ -195,6 +248,7 @@ function run(self) {
             stretch:    0.,
             height:     0.
         };
+        let right = 0.;
         let words = [];
         let pos = b.prev;
         let branches = 0;
@@ -203,9 +257,11 @@ function run(self) {
             switch (node[0]) {
                 case 0: // Word
                     let w = node[1];
-                    let x = measure_at(measure, b.factor);
                     measure = measure_add(measure, self.word(w));
-                    words.push([w, x]);
+                    let x = measure_at(measure, b.factor);
+                    
+                    words.push([w, x-right]);
+                    right = x;
                     break;
                 
                 case 2: // Space
@@ -353,32 +409,34 @@ function show_line() {
     do {
         var line = display_state.lines[display_state.line];
         
-        let lineElement = document.createElement("line");
-        lineElement.style.top = display_state.y + "px";
+        let lineElement = new LoomLine(display_state.y);
         
         let height = line[0];
         let words = line[1];
         for (var word of words) {
             let text = word[0];
-            let x = word[1];
+            let left = word[1];
             
-            let wordElement = document.createElement("span");
+            let wordElement = new LoomWord();
+            wordElement.style.width = left + "px";
             wordElement.appendChild(document.createTextNode(text));
-            wordElement.style.left = x + "px";
             lineElement.appendChild(wordElement);
         }
         display_state.y += height;
-        
         display_state.target.appendChild(lineElement);
-        
         display_state.line += 1;
         
         let time = new Date();
         let dt = time - display_state.time;
         if (dt > 20.) {
             display_state.time = time;
-            window.setTimeout(show_line, 0);
             break;
         }
     } while (display_state.line < display_state.lines.length)
+    
+    if (display_state.line < display_state.lines.length) {
+        display_state.timeout = window.setTimeout(show_line, 0);
+    } else {
+        display_state.timeout = null;
+    }
 }

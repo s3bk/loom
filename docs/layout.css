@@ -1,6 +1,7 @@
 #control-box {
     position: fixed;
     left: 0;
+    top: 0;
     width: 1em;
     background-color: lightblue;
 }
@@ -30,14 +31,15 @@ div#content {
 section#target {
     display: flex;
     width: 30em;
+    flex-direction: column;
 }
 
-line {
-    display: block;
-    position: absolute;
+section#target > loom-line {
+    height: 1em;
+    flex-direction: row;
+    display: flex;
 }
 
-line > span {
-    position: absolute;
+loom-word {
+    text-align: right;
 }
-
