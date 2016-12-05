@@ -80,6 +80,9 @@ document.addEventListener("DOMContentLoaded", function() {
     add_control(p, "text_width", 0, 100, 1, function(v) {
         document.getElementById("target").style.width = v + "vw";
     });
+    add_control(p, "leading", 1.0, 2.0, 1.4, function(v) {
+        document.getElementById("target").style.lineHeight = v;
+    );
     
     config_from_hash();
     update_layout();
@@ -100,30 +103,28 @@ function control_updated(e) {
     update_history();
 }
 let controls = {};
-function add_control(dl, name, min, max, step, callback) {
-    let dt = document.createElement("dt");
-    dt.appendChild(document.createTextNode(name));
-    dl.appendChild(dt);
+function add_control(p, name, min, max, step, callback) {
+    let label = document.createElement("label");
+    label.appendChild(document.createTextNode(name));
     
-    let dd = document.createElement("dd");
-    let i = document.createElement("input");
-    i.setAttribute("type", "range");
-    i.setAttribute("min",  min);
-    i.setAttribute("max", max);
-    i.setAttribute("step", step);
-    i.setAttribute("name", name);
+    let input = document.createElement("input");
+    input.setAttribute("type", "range");
+    input.setAttribute("min",  min);
+    input.setAttribute("max", max);
+    input.setAttribute("step", step);
+    input.setAttribute("name", name);
     
     let value = config[name];
-    i.setAttribute("value", value);
+    input.setAttribute("value", value);
     if (callback != undefined) callback(value);
     
-    i.addEventListener("input", control_updated, false);
+    input.addEventListener("input", control_updated, false);
     
-    dd.appendChild(i);
-    dl.appendChild(dd);
+    label.appendChild(input);
+    p.appendChild(label);
     controls[name] = {
         name:       name,
-        input:      i,
+        input:      input,
         callback:   callback
     };
 }

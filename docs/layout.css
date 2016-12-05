@@ -35,7 +35,6 @@ section#target {
 }
 
 section#target > loom-line {
-    height: 1em;
     flex-direction: row;
     display: flex;
 }
