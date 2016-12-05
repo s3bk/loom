@@ -49,7 +49,8 @@ let config = {
     space_shrink:   0.5,
     space_width:    1.0,
     space_stretch:  2.0,
-    text_width:     50
+    text_width:     50,
+    leading:        1.4
 };
 /*
 window.addEventListener("popstate", function(event) {
@@ -80,9 +81,9 @@ document.addEventListener("DOMContentLoaded", function() {
     add_control(p, "text_width", 0, 100, 1, function(v) {
         document.getElementById("target").style.width = v + "vw";
     });
-    add_control(p, "leading", 1.0, 2.0, 1.4, function(v) {
+    add_control(p, "leading", 1.0, 2.0, 0.1, function(v) {
         document.getElementById("target").style.lineHeight = v;
-    );
+    });
     
     config_from_hash();
     update_layout();
