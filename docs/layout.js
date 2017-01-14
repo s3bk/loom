@@ -1,3 +1,5 @@
+"use strict";
+
 class LoomLine extends HTMLElement {
     constructor(y) {
         super();
@@ -15,6 +17,7 @@ class LoomWord extends HTMLElement {
 
     static get observedAttributes() { return []; }
 }
+
 customElements.define("loom-word", LoomWord);
 
 let layout_items;
@@ -72,14 +75,17 @@ let display_state = {
 };
 
 document.addEventListener("DOMContentLoaded", function() {
-    
+    let m = document.getElementById("measure");
     let p = document.getElementById("controls");
+    let px_per_em = m.getBoundingClientRect().width * 0.01;
+    let viewport_width = document.documentElement.clientWidth;
+    let max_width = viewport_width / px_per_em - 2;
     
     add_control(p, "space_shrink", 0.2, 1.0, 0.05);
     add_control(p, "space_width", 0.6, 2.0, 0.2);
     add_control(p, "space_stretch", 1.0, 5.0, 0.25);
-    add_control(p, "text_width", 0, 100, 1, function(v) {
-        document.getElementById("target").style.width = v + "vw";
+    add_control(p, "text_width", 0, max_width, 1, function(v) {
+        document.getElementById("target").style.width = v + "em";
     });
     add_control(p, "leading", 1.0, 2.0, 0.1, function(v) {
         document.getElementById("target").style.lineHeight = v;

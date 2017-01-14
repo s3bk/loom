@@ -1,6 +1,7 @@
 !load preamble
 !use preamble/*
 !group "<" ref ">"
+!symbol "--" "—"
 
 
 :chapter Reference
@@ -42,7 +43,7 @@
     :term Metafile
         
         The <Metafile> describes the building blocks that are available in the 
-        .document .
+        <Document> .
         Imagine the <Metafile> as the specification and documentation of 
         your Loom .
         It contains the <commands> including translation and description .

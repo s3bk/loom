@@ -3,35 +3,51 @@ use output::Output;
 use std::iter::Extend;
 
 struct GenericBranchGen<'a, O: Output + 'a> {
-    parent: &'a mut GenericWriter<O>,
-    branches: Vec<StreamVec<O::Word, O::Measure>>
+    parent: &'a GenericWriter<O>,
+    branches: Vec<(StreamVec<O::Word>, Glue)>
 }
 impl<'a, O: Output> BranchGenerator<'a> for GenericBranchGen<'a, O> {
     fn add(&mut self, f: &mut FnMut(&mut Writer)) {
         let mut w = self.parent.dup();
         f(&mut w);
-        self.branches.push(w.stream);
-        self.parent.state |= w.state;
+        self.branches.push((w.stream, w.state));
     }
 }
-impl<'a, O: Output> Drop for GenericBranchGen<'a, O> {
-    fn drop(&mut self) {
-        self.parent.push_branch(self.branches.drain(..));
-    }
-}
-
 pub struct GenericWriter<O: Output> {
     state:      Glue,
-    stream:     StreamVec<O::Word, O::Measure>,
+    stream:     StreamVec<O::Word>,
     font:       O::Font
 }
 
 // careful with the arguments.. they all have the same type!
-fn merge<W, M>(out: &mut StreamVec<W, M>, a: StreamVec<W, M>, b: StreamVec<W, M>) {
-    out.push(StreamItem::BranchEntry(b.len() + 1));
-    out.extend(b);
-    out.push(StreamItem::BranchExit(a.len()));
-    out.extend(a);
+fn merge<W>(out: &mut StreamVec<W>, mut a: StreamVec<W>, mut b: StreamVec<W>) {
+    if a.len() == 0 {
+        out.extend(b);
+    } else if b.len() == 0 {
+        out.extend(a);
+    } else {
+        let equal_end = match (a.last().unwrap(), b.last().unwrap()) {
+            (&Entry::Space(a_break, a_measure), &Entry::Space(b_break, b_measure)) =>
+                (a_break == b_break) && (a_measure == b_measure),
+            _ => false
+        };
+        
+        let end_sym = if equal_end {
+            a.pop();
+            b.pop()
+        } else {
+            None
+        };
+
+        out.push(Entry::BranchEntry(b.len() + 1));
+        out.extend(b);
+        out.push(Entry::BranchExit(a.len()));
+        out.extend(a);
+        
+        if let Some(end) = end_sym {
+            out.push(end);
+        }
+    }
 }
 impl<O: Output> GenericWriter<O> {
     pub fn new(font: O::Font) -> GenericWriter<O> {
@@ -41,22 +57,22 @@ impl<O: Output> GenericWriter<O> {
             font:   font
         }
     }
-    fn dup(&mut self) -> GenericWriter<O> {
+    fn dup(&self) -> GenericWriter<O> {
         GenericWriter {
             stream: Vec::new(),
-            state:  Glue::None,
+            state:  self.state,
             font:   self.font.clone(),
         }
     }
     
-    pub fn finish(&mut self) -> &StreamVec<O::Word, O::Measure> {
+    pub fn finish(&mut self) -> &StreamVec<O::Word> {
         self.write_glue(Glue::Newline { fill: false });
         &self.stream
     }
     
-    fn push_branch<I>(&mut self, mut ways: I) where I: Iterator<Item=StreamVec<O::Word, O::Measure>> {
+    fn push_branch<I>(&mut self, mut ways: I) where I: Iterator<Item=StreamVec<O::Word>> {
         if let Some(default) = ways.next() {
-            let mut others: Vec<StreamVec<O::Word, O::Measure>> = ways.collect();
+            let mut others: Vec<StreamVec<O::Word>> = ways.collect();
             
             if others.len() == 0 {
                 self.stream.extend(default);
@@ -83,16 +99,16 @@ impl<O: Output> GenericWriter<O> {
     fn write_glue(&mut self, left: Glue) {
         match self.state | left {
             Glue::Newline { fill: f }
-             => self.stream.push(StreamItem::Linebreak(f)),
+             => self.stream.push(Entry::Linebreak(f)),
             Glue::Space { breaking: b, scale: s }
-             => self.stream.push(StreamItem::Space(b, O::measure_space(&self.font, s))),
+             => self.stream.push(Entry::Space(b, O::measure_space(&self.font, s))),
             Glue::None => ()
         }
     }
     
     #[inline(always)]
     fn push<F>(&mut self, left: Glue, right: Glue, f: F) where
-    F: FnOnce(&mut StreamVec<O::Word, O::Measure>, &O::Font)
+    F: FnOnce(&mut StreamVec<O::Word>, &O::Font)
     {
         self.write_glue(left);
         f(&mut self.stream, &self.font);
@@ -101,27 +117,54 @@ impl<O: Output> GenericWriter<O> {
     }
 }   
 impl<O: Output> Writer for GenericWriter<O> {
-    fn branch(&mut self, left: Glue, right: Glue, ways: usize,
-    f: &mut FnMut(&mut BranchGenerator))
+    fn branch(&mut self, f: &mut FnMut(&mut BranchGenerator))
     {
-        self.write_glue(left);
-        f(&mut GenericBranchGen {
-            parent:     self,
-            branches:   Vec::with_capacity(ways)
-        });
-        self.state = right;
+        let mut branches = {
+            let mut gen = GenericBranchGen {
+                parent:     self,
+                branches:   Vec::new()
+            };
+            f(&mut gen);
+        
+            gen.branches
+        };
+        let mut glue = Glue::any();
+        self.push_branch(branches.drain(..).map(|(v, s)| {
+            glue |= s;
+            v
+        }));
+        self.state = glue;
+        // FIXME
+        //self.state = right;
     }
 
     #[inline(always)]
     fn word(&mut self, word: Atom) {
+        println!("Word: '{}'", word);
         self.push(word.left, word.right, move |s, f|
-            s.push(StreamItem::Word(O::measure(f, word.text)))
+            s.push(Entry::Word(O::measure(f, word.text)))
         );
+    }
+        
+    fn punctuation(&mut self, p: Atom) {
+        println!("Punc: '{}'", p);
+        self.push(p.left, p.right, move |s, f|
+            s.push(Entry::Punctuation(O::measure(f, p.text)))
+        );
+    }
+    
+    fn object(&mut self, _item: Box<Object>) {
+    
     }
     
     #[inline(always)]
     fn promote(&mut self, glue: Glue) {
+        println!("Prom: {}", glue);
         self.state |= glue;
+    }
+    
+    fn section(&mut self, f: &mut FnMut(&mut Writer), _name: &str) {
+        f(self)
     }
 }
  

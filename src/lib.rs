@@ -1,8 +1,9 @@
 #![feature(trace_macros)]
-#![feature(proc_macro)]
 #![feature(conservative_impl_trait)]
 #![feature(box_syntax)]
 #![feature(custom_attribute)]
+#![feature(non_ascii_idents)]
+#![feature(link_args)]
 
 //#[macro_use] extern crate derivative;
 #[macro_use] extern crate nom;
@@ -17,11 +18,12 @@ extern crate rmp_serialize;
 extern crate rustc_serialize;
 extern crate lz4;
 extern crate woot;
-extern crate mio;
-extern crate futures;
-extern crate curl;
+//extern crate mio;
+//extern crate futures;
+//extern crate curl;
 extern crate inlinable_string;
 extern crate ordermap;
+extern crate num;
 
 #[cfg(feature = "output_png")]
 extern crate image;
@@ -30,6 +32,12 @@ extern crate rusttype;
 
 #[cfg(feature = "output_pdf")]
 extern crate pdf;
+
+#[cfg(feature = "output_html")]
+extern crate sxd_document;
+
+#[cfg(feature = "platform_default")]
+extern crate curl;
 
 pub mod blocks;
 pub mod environment;
@@ -41,3 +49,5 @@ pub mod io;
 pub mod commands;
 pub mod output;
 pub mod slug;
+pub mod units;
+pub mod platform;

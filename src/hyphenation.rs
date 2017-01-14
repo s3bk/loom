@@ -4,6 +4,7 @@ use std::ops;
 use std::fs;
 use std::collections::BTreeMap;
 use fst::{Map, MapBuilder};
+use io::{File, Result};
 
 #[derive(Clone)]
 pub struct Hyphen {
@@ -21,7 +22,7 @@ impl Hyphen {
         let mut iter = word.chars();
         
         // count p chars 
-        for i in 0 .. p {
+        for _ in 0 .. p {
             iter.next();
         }
         //and everything left is the second part
@@ -101,11 +102,27 @@ impl Hyphenator {
         }
     }
     
-    pub fn load(path: &Path) -> Hyphenator {
-        Hyphenator {
-            map: Map::from_path(path).expect(&format!("failed to load map: {:?}", path)),
+    pub fn load(file: &File) -> Result<Hyphenator> {
+        #[cfg(not(feature = "mmap"))]
+        let map_o = None;
+        #[cfg(feature = "mmap")]
+        let map_o: Option<Map> = match file.path() {
+            Some(p) => Some(Map::from_path(p)?),
+            None => None
+        };
+        
+        let map = match map_o {
+            Some(m) => m,
+            None => {
+                let data = file.read()?;
+                Map::from_bytes(data)?
+            }
+        };
+        
+        Ok(Hyphenator {
+            map: map,
             changes: BTreeMap::new()
-        }
+        })
     }
     
     pub fn empty() -> Hyphenator {

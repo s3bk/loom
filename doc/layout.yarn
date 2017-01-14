@@ -37,6 +37,95 @@ Layout 3
 |   |   |owing paragraph. slightly indented|   |
 |   | Unless it is interrupted by a comment|   |
 
+|<-------------------- W --------------------->|
+|   |<---------------- t ----------------->|   |
+|<m>| [___] ext normally uses the full     |<m>|
+|   | [ | ] sans margins                   |   |
+|   |                                      |   |
+|   |<s>|A comment to comment on the foll- |   |
+|   |   |owing paragraph. slightly indented|   |
+|   | Unless it is interrupted by a comment|   |
 
+Surface: (writable) view to the backend
 
+Node::layout ⟶ Writer ⟶ Backend
+                   ↘         ↗
+                Object ⟶ Surface
 
+«Layout»
+    Book / …
+     -> Page
+         -> Area
+    
+
+    Paragraph
+        …
+    
+    Initials
+        text => text[0], text[1..]
+        - draw first letter with special font
+
+Area
+    - &mut Surface
+    - Rect
+
+AreaGen
+    get(i: int) -> Area_i
+
+Breakpoints:
+  - space
+  - linebreak
+  - column/page
+  
+A paragraph    A second
+with one       paragraph.
+sentence.
+  
+0   A           1
+1   paragraph   2  
+2   with        3
+3   one         4
+4   sentence.   5
+
+5   A           6  6
+6   second      
+7   paragraph.
+
+None     < Space     Space | Newline    Newline > World. Space
+    Hello world <[inline math] x² | [display math] x^2 > .
+
+    Hello _* world | (: ?)
+    entry n
+        entry m
+            _* x² _*   [Skip(n) _], [«x²», Space]
+        exit m
+            \\* x^2 _* + z \\*
+    exit
+        ~ x² _*
+    ...
+    entry
+        ~ a
+    exit
+        \\ b
+
+    Backend
+        - primary length (width for horizontal text)
+        - secondary length (optional)
+        - basesize
+
+Kerning?
+
+        
+Line-breaking algorithm
+    actions:
+      - flex (draw / empty)
+      - break (preferences)
+    
+    breaking space: (flex) OR (newline)
+    hyphen: [ignore flex] (hyphen + newline) OR ()
+    math:   (space + inline_math + space) OR (newline + display_math + newline)
+    
+    score:
+      - previous score
+      - penalty for (hyphenation, breaking a sentence, …)
+      - flex factor

@@ -1,62 +1,124 @@
-use layout::{Flex, FlexMeasure, StreamVec, StreamItem};
+use layout::*;
 use std::error::Error;
 use std::fmt::{Debug, self};
 use output::Output;
 use std::path::Path;
 use std::io::Write;
 use std::fs::File;
-
-#[derive(Debug, Clone)]
-pub struct HtmlWord {
-    s:  String
-}
-
-#[derive(Clone)]
-pub struct HtmlFont {
-
-}
+use sxd_document::{Package, dom};
 
 pub struct HtmlOutput {
-    file:   File,
+    package: Package
 }
 
-impl Output for HtmlOutput {
-    type Word = HtmlWord;
-    type Font = HtmlFont;
-    type Measure = f32;
+struct HtmlFakeBranchGen<'a, 'b> where 'b: 'a {
+    w:      &'a mut HtmlWriter<'b>,
+    first:  bool
+}
+impl<'a, 'b> BranchGenerator<'a> for HtmlFakeBranchGen<'a, 'b> where 'b: 'a {
+    fn add(&mut self, f: &mut FnMut(&mut Writer)) {
+        if self.first {
+            self.first = false;
+            f(self.w);
+        }
+    }
+}
+pub struct HtmlWriter<'a> {
+    element:    dom::Element<'a>,
+    state:      Glue
+}
+impl<'a> HtmlWriter<'a> {
+    fn add<F, C>(&self, f: F) where
+    F: FnOnce(dom::Document<'a>) -> C,
+    C: Into<dom::ChildOfElement<'a>>
+    {
+        self.element.append_child(f(self.element.document()))
+    }
+    pub fn new(out: &mut HtmlOutput) -> HtmlWriter {
+        let doc = out.doc();
+        let html = doc.create_element("html");
+        let body = doc.create_element("body");
+        let article = doc.create_element("article");
+        
+        body.append_child(article);
+        html.append_child(body);
+        doc.root().append_child(html);
+        
+        HtmlWriter {
+            element:    article,
+            state:      Glue::None
+        }
+    }
+    pub fn finish<W: Write>(self, out: &mut W) {
+        use sxd_document::writer::format_document;
+        format_document(&self.element.document(), out);
+    }
     
-    fn measure(_: &HtmlFont, s: &str) -> HtmlWord {
-        HtmlWord { s: s.to_owned() }
+    fn add_glue(&mut self, glue: Glue) {
+        match self.state | glue {
+            Glue::None => {},
+            Glue::Space { breaking: true, .. } => {
+                self.add(|d| d.create_text(" "));
+            },
+            Glue::Space { breaking: false, .. } => {
+                self.add(|d| d.create_text(" "));
+            },
+            Glue::Newline { .. } => {
+                self.add(|d| d.create_element("br"));
+            }
+        }
     }
-    fn measure_space(_: &HtmlFont, scale: f32) -> f32 {
-        scale
+}
+
+impl<'a> Writer for HtmlWriter<'a> {
+    fn word(&mut self, word: Atom) {
+        self.add_glue(word.left);
+        self.add(|d| d.create_text(word.text));
+        self.state = word.right;
     }
-    fn default_font(&mut self) -> HtmlFont {
-        HtmlFont {}
+    
+    fn punctuation(&mut self, p: Atom) {
+        self.add_glue(p.left);
+        self.add(|d| d.create_text(p.text));
+        self.state = p.right;
+    }
+    
+    fn branch(&mut self, f: &mut FnMut(&mut BranchGenerator)) {
+        f(&mut HtmlFakeBranchGen {
+            w:      self,
+            first:  true
+        });
+    }
+    
+    fn promote(&mut self, glue: Glue) {
+        self.state |= glue;
+    }
+    
+    fn object(&mut self, item: Box<Object>) {}
+    
+    fn section(&mut self, f: &mut FnMut(&mut Writer), name: &str) {
+        self.add(|d| {
+            let s = d.create_element("section");
+            s.set_attribute_value("name", name);
+            
+            f(&mut HtmlWriter {
+                element:    s,
+                state:      Glue::None
+            });
+            s
+        })
     }
 }
 
 impl HtmlOutput {
-    pub fn new(path: &Path) -> HtmlOutput {
+    pub fn new() -> HtmlOutput {
+        let package = Package::new();
+        
         HtmlOutput {
-            file: File::create(path).expect("could not create file")
+            package:    package
         }
     }
-
-    pub fn render(&mut self, stream: &StreamVec<HtmlWord, f32>) {
-        use itertools::Itertools;
-        write!(
-            self.file,
-            "layout([\n{}\n]);\n",
-            stream.iter().map(|item| {
-                match item {
-                    &StreamItem::Word(ref w)    => format!("  [0, {:?}]", w.s),
-                    &StreamItem::Linebreak(f)   => format!("  [1, {:?}]", f),
-                    &StreamItem::Space(b, m)    => format!("  [2, {:?}, {}]", b, m),
-                    &StreamItem::BranchEntry(s) => format!("  [3, {}]", s),
-                    &StreamItem::BranchExit(s)  => format!("  [4, {:?}]", s),
-                }
-            }).join(",\n")
-        );
+    fn doc(&self) -> dom::Document {
+        self.package.as_document()
     }
 }

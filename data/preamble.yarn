@@ -4,22 +4,16 @@
     $body \hfill
 
 /term
-    :big Term $args
+    Term $args
     
     $body \hfill
 
 /brief
-    :small
-    
     $body \hfill
 
 /ref $args
 
-Command lookup is done in the PathEnv
-    
-Variable-lookup is done in the GraphEnv
-
-!replace "->"
-!replace "=>" "⇒"
-!replace "<-" "←"
-!replace "<=" "⇐"
+!symbol "=>" -> "→"
+!symbol "=>" "⇒"
+!symbol "<-" "←"
+!symbol "<=" "⇐"

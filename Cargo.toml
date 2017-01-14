@@ -4,30 +4,34 @@ version = "0.1.0"
 authors = ["Sebastian Köln <sebk@rynx.org>"]
 
 [features]
-default = ["output_png", "output_html"]
+default = ["output_png", "output_html", "mmap", "platform_default"]
 output_png = ["image", "rusttype"]
 output_pdf = ["pdf"]
-output_html = []
-
+output_html = ["sxd-document"]
+platform_default = ["curl"]
+# target has mmap
+mmap = ["fst/mmap"]
 
 [dependencies]
 unicode_categories = "*"
 unicode-brackets = "*"
 roman = "*"
-fst = "*"
 rmp = "*"
 rmp-serialize = "*"
 rustc-serialize = "*"
 lz4 = "*"
-broadcast = "*"
-mio = "*"
-clap = {version="*",   features=["yaml"]}
-derivative = "*"
+#broadcast = "*"
+#mio = "*"
+#derivative = "*"
 itertools = "*"
-futures = "*"
-curl = "*"
+#futures = "*"
 inlinable_string = "*"
 ordermap = { git="https://github.com/bluss/ordermap" }
+num = "*"
+
+[dependencies.fst]
+version = "*"
+default_features = false
 
 [dependencies.rusttype]
 version = "*"
@@ -53,11 +57,17 @@ features = []
 git = "https://github.com/s3bk/woot.git"
 #path = "../woot"
 
-[[bin]]
-name = "render"
+[dependencies.sxd-document]
+version = "*"
+optional = true
 
-[[bin]]
-name = "hyphen_import"
+[dependencies.curl]
+version = "*"
+optional = true
 
 [[bin]]
 name = "profile_parser"
+
+
+[profile.release]
+opt-level = 3

@@ -1,14 +1,12 @@
 use std::iter::Iterator;
 use std::ops::Deref;
 use std::rc::Rc;
-use std::fmt::Debug;
 use std::cell::RefCell;
-use layout::{Atom, Glue, Writer, Flex};
+use layout::{Atom, Writer};
 use environment::{LocalEnv, GraphChain};
 use io::{Stamp, IoRef};
-use woot::{WString, WStringIter};
+use woot::WString;
 use inlinable_string::InlinableString;
-use output::Output;
 
 /// The Document is a Directed Acyclic Graph.
 ///
@@ -19,10 +17,10 @@ use output::Output;
 /// Everything is an Object -> is a Pointer -> is an ID
 /// Since this is Rust, there will be a Trait requirement
 
-pub type NodeP = P<Node>;
-pub type NodeListP = P<NodeList<NodeP>>;
+pub type NodeP = Ptr<Node>;
+pub type NodeListP = Ptr<NodeList<NodeP>>;
 
-pub trait Node {    
+pub trait Node {
     /// when building the graph, this method is called
     /// to add child-nodes to the index
     fn childs(&self, &mut Vec<NodeP>) {}
@@ -44,11 +42,11 @@ pub trait Node {
     }
 }
 
-pub struct P<N: ?Sized + Node> {
+pub struct Ptr<N: ?Sized + Node> {
     rc: Rc<N>,
-    //references: LinkedList<P<N>>
+    //references: LinkedList<Ptr<N>>
 }
-impl<N: ?Sized> Node for P<N> where N: Node {
+impl<N: ?Sized> Node for Ptr<N> where N: Node {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.rc.childs(out)
     }
@@ -59,37 +57,37 @@ impl<N: ?Sized> Node for P<N> where N: Node {
         self.rc.layout(env, w)
     }
 }
-impl<N> P<N> where N: Node {
-    pub fn new(n: N) -> P<N> {
-        P {
+impl<N> Ptr<N> where N: Node {
+    pub fn new(n: N) -> Ptr<N> {
+        Ptr {
             rc: Rc::new(n),
             //references: LinkedList::new()
         }
     }
 }
-impl<N> From<P<N>> for P<Node> where N: Node + Sized + 'static {
-    fn from(n: P<N>) -> P<Node> {
-        P {
+impl<N> From<Ptr<N>> for Ptr<Node> where N: Node + Sized + 'static {
+    fn from(n: Ptr<N>) -> Ptr<Node> {
+        Ptr {
             rc: n.rc as Rc<Node>
         }
     }
 }
 
-impl<N: ?Sized> Deref for P<N> where N: Node {
+impl<N: ?Sized> Deref for Ptr<N> where N: Node {
     type Target = N;
     
     fn deref(&self) -> &N {
         self.rc.deref()
     }
 }
-impl<N> P<N> where N: Node {
+impl<N> Ptr<N> where N: Node {
     pub fn get_mut(&mut self) -> Option<&mut N> {
         Rc::get_mut(&mut self.rc)
     }
 }
-impl<N: ?Sized> Clone for P<N> where N: Node {
-    fn clone(&self) -> P<N> {
-        P {
+impl<N: ?Sized> Clone for Ptr<N> where N: Node {
+    fn clone(&self) -> Ptr<N> {
+        Ptr {
             rc: self.rc.clone()
         }
     }
@@ -184,7 +182,6 @@ impl<T> NodeList<T> where T: Node + Clone {
     pub fn from<I>(io: IoRef, iter: I) -> NodeList<T>
     where I: Iterator<Item=T> {
         let mut ws = WString::new();
-        let buf: Vec<u8> = Vec::with_capacity(1000);
         
         for (n, item) in iter.enumerate() {
             let job = io.create();

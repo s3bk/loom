@@ -1,16 +1,11 @@
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::path::PathBuf;
-use document::{Node, NodeP, P, NodeListP};
-use io::IoRef;
+use document::{NodeP, NodeListP};
+use io::{IoRef, Directory, File, Entry};
 use hyphenation::Hyphenator;
-use document;
-use parser;
 use commands::Command;
 use inlinable_string::InlinableString;
 use ordermap::OrderMap;
-use output::Output;
-use layout::{Atom, Glue, Writer, Flex, StreamVec};
+use layout::{Atom, Glue, Writer};
 
 /// The Environment can only be changed within the Block::parse call
 /// Is is therefore allowed to cache results whithin methods that do not involve
@@ -21,11 +16,12 @@ use layout::{Atom, Glue, Writer, Flex, StreamVec};
 
 /// used at graph creation and possibly layout
 pub struct LocalEnv {
-    paths:          Vec<PathBuf>,
+    paths:          Vec<Directory>,
     commands:       HashMap<String, Command>,
     targets:        HashMap<String, NodeP>,
     groups:         OrderMap<(InlinableString, InlinableString), NodeP>,
-    hyphenator:     Option<Hyphenator>
+    hyphenator:     Option<Hyphenator>,
+    symbols:        OrderMap<InlinableString, InlinableString>
 }
 
 pub struct Fields {
@@ -66,14 +62,15 @@ impl LocalEnv {
             commands:   HashMap::new(),
             targets:    HashMap::new(),
             groups:     OrderMap::new(),
-            hyphenator: None
+            hyphenator: None,
+            symbols:    OrderMap::new()
         }
     }
     pub fn add_command(&mut self, name: &str, cmd: Command) {
         self.commands.insert(name.to_owned(), cmd);
     }
-    fn add_path(&mut self, path: PathBuf) {
-        self.paths.push(path);
+    fn add_path(&mut self, dir: Directory) {
+        self.paths.push(dir);
     }
     pub fn add_target(&mut self, name: &str, target: NodeP) {
         println!("add_target({}, …)", name);
@@ -95,6 +92,9 @@ impl LocalEnv {
     }
     pub fn set_hyphenator(&mut self, hyphenator: Hyphenator) {
         self.hyphenator = Some(hyphenator);
+    }
+    pub fn add_symbol(&mut self, src: &str, dst: &str) {
+        self.symbols.insert(src.into(), dst.into());
     }
 }
 
@@ -152,7 +152,7 @@ impl<'a> GraphChain<'a> {
     pub fn hyphenate(&self, w: &mut Writer, word: Atom) {
         if let Some(hyphenator) = self.hyphenator() {
             if let Some(points) = hyphenator.get(word.text) {
-                w.branch(word.left, word.right, points.len() + 1, &mut |b| {
+                w.branch(&mut |b| {
                     b.add(&mut |w: &mut Writer| w.word(word) );
                         
                     for p in points.iter() {
@@ -160,12 +160,17 @@ impl<'a> GraphChain<'a> {
                         b.add(&mut |w: &mut Writer| {
                             w.word(Atom {
                                 left:   word.left,
+                                right:  Glue::None,
+                                text:   left
+                            });
+                            w.punctuation(Atom {
+                                left:   Glue::None,
                                 right:  Glue::newline(),
-                                text:   &format!("{}-", left)
+                                text:   "-"
                             });
                             w.word(Atom {
                                 left:   Glue::newline(),
-                                right:  Glue::space(),
+                                right:  word.right,
                                 text:   right
                             });
                         });
@@ -180,11 +185,13 @@ impl<'a> GraphChain<'a> {
     }
     
     
-    pub fn search_file(&self, filename: &str) -> Option<PathBuf> {
+    pub fn search_file(&self, filename: &str) -> Option<File> {
         for dir in self.local.paths.iter() {
-            let path = dir.join(filename);
-            if path.is_file() {
-                return Some(path);
+            match dir.get(filename) {
+                Ok(Entry::File(f)) => {
+                    return Some(f);
+                }
+                _ => {}
             }
         }
         
@@ -222,24 +229,22 @@ impl<'a> GraphChain<'a> {
                 None => None
             }
         }
-    }    
+    }
+    pub fn get_symbol(&self, name: &str) -> Option<&str> {
+        match self.local.symbols.get(name) {
+            Some(t) => Some(&t),
+            None => match self.parent {
+                Some(p) => p.get_symbol(name),
+                None => None
+            }
+        }
+    }
 }   
 
-pub fn prepare_graph() -> LocalEnv {
-    use layout::Flex;
+pub fn prepare_graph(io: IoRef) -> LocalEnv {
     use commands;
-    use std::env::var_os;
-    use std::path::Path;
     
-    let data_path: PathBuf = match var_os("LOOM_DATA") {
-        Some(v) => v.into(),
-        None => {
-            let p = Path::new("data").into();
-            println!("LOOM_DATA not set. Using '{:?}' instead.", p);
-            p
-        }
-    };
-    
+    let data_path = io.platform().data_dir();
     let mut e = LocalEnv::new();
     
     e.add_path(data_path);

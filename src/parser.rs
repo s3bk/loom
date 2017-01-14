@@ -1,8 +1,9 @@
-use nom::{self, IResult, ErrorKind, digit, AsBytes, Compare, Slice, Offset,
-InputLength, InputIter, Needed, CompareResult, FindToken};
+use nom::{self, IResult, ErrorKind, digit, Slice, InputLength, InputIter};
 use std::iter::{Iterator};
 use unicode_categories::UnicodeCategories;
 use unicode_brackets::UnicodeBrackets;
+
+#[cfg(debug_assertions)]
 use slug;
 
 macro_rules! alt_apply {
@@ -64,8 +65,6 @@ fn test_space() {
         space("x") => Error;
     );
 }
-
-named!(newline, tag!("\n"));
 
 #[inline(always)]
 fn endline(input: Data) -> IResult<Data, ()> {

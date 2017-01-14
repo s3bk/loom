@@ -26,42 +26,20 @@
         
         :result
             Document tree
-                    
+    
+    :section Metafile
+        The relevant Metafile is loaded .
+        
+        Attributes for the uses nodes are resolved
+    
     :section Layout Graph
         The block handlers are executed and combine the results from their 
         children into one node . This results in the full layout graph .
 
-    :section International Exports (and Imports)
-        Modules are named items .
-        They are similar to a definitions, execept that the name is determiened by
-        the filename and the contents by the contents of that file .
-        
-        There are a few requirements for the import mechanism :
-          - Imports should not live at the root level:
-        Otherwise adding a module (or using functions thereof) requires
-        modification of the root node .
-          - global namespace vs tree
-        
-        Mechanism itself:
-            !load name
-             -> load $MODULE_DIR/name.meta
-             -> module "name" is added .
-            
-            !load mod/part
-             -> load $MODULE_DIR/mod/part.meta
-             -> module "part" is added .
-            
-            !load http://foo.bar/baz
-             -> load http://foo.bar/baz.meta
-             -> module "baz" is added .
-            
-            !load https://github.com/user/repo/foo
-             -> load git://github.com/user/repo/foo.meta
-             -> module "foo" is added .
-            
-            !use foo/*
-             -> adds all definitions from "foo" to the local scope .
-             
-            !use foo/bar
-             -> adds "bar" from "foo" to the local scope .
-    
+    :section Primitive Stream
+    output:
+        PDF
+        HTML + CSS + JS
+        ePUB
+        Viewer
+        Image(PNG/Tiff)

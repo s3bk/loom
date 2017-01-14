@@ -1,7 +1,6 @@
-use layout::{StreamItem, StreamVec, FlexMeasure, Flex};
-use output::{Output, VectorOutput};
-use std::clone::Clone;
-use std::fmt::Debug;
+use layout::{Entry, StreamVec, FlexMeasure, Surface};
+use output::{Output};
+use num::Zero;
 
 #[derive(Copy, Clone, Debug, Default)]
 struct LineBreak {
@@ -10,15 +9,10 @@ struct LineBreak {
     factor: f32,
     score:  f32
 }
-type Entry = Option<LineBreak>;
-
-pub struct ParagraphLayout<'a, W: 'a, M: 'a> {
-    items:      &'a StreamVec<W, M>,
+pub struct ParagraphLayout<'a, O: Output + 'a> {
+    items:      &'a StreamVec<O::Word>,
     width:      f32,
-}
-pub struct Line<Word> {
-    pub words:  Vec<(Word, f32)>,
-    pub height: f32
+    surface:    &'a mut O::Surface
 }
 
 struct LineContext {
@@ -30,21 +24,22 @@ struct LineContext {
     branches:   u8 // number of branches so far (<= 64)
 }
 
-impl<'a, W: Flex + Debug + Clone, M: Flex + Debug + Clone> ParagraphLayout<'a, W, M>  {
-    pub fn new(s: &'a StreamVec<W, M>, width: f32)
-     -> ParagraphLayout<'a, W, M>
+impl<'a, O: Output> ParagraphLayout<'a, O>  {
+    pub fn new(items: &'a StreamVec<O::Word>, surface: &'a mut O::Surface, )
+     -> ParagraphLayout<'a, O>
     {
         ParagraphLayout {
-            items: s,
-            width: width
+            items:      items,
+            width:      surface.primary(),
+            surface:    surface
         }
     }
     
-    pub fn run(&mut self) -> Vec<Line<W>> {
+    pub fn run(&mut self) {
         use std::iter::repeat;
         
         let limit = self.items.len();
-        let mut nodes: Vec<Entry> = repeat(None).take(limit+1).collect();
+        let mut nodes: Vec<Option<LineBreak>> = repeat(None).take(limit+1).collect();
         nodes[0] = Some(LineBreak::default());
         let mut last = 0;
         
@@ -75,7 +70,7 @@ impl<'a, W: Flex + Debug + Clone, M: Flex + Debug + Clone> ParagraphLayout<'a, W
         println!("last: {}", last);
         
         if last == 0 {
-            return vec![];
+            return;
         }
         
         let mut steps = vec![];
@@ -92,58 +87,50 @@ impl<'a, W: Flex + Debug + Clone, M: Flex + Debug + Clone> ParagraphLayout<'a, W
             }
         }
         
-        let mut lines = Vec::with_capacity(steps.len());
+        let mut y = 0.;
         for &(b, end) in steps.iter().rev() {
             let mut measure = FlexMeasure::zero();
-            let mut words = vec![];
             let mut pos = b.prev;
             let mut branches = 0;
             while pos < end {
-                let node = self.items[pos].clone();
-                match node {
-                    StreamItem::Word(w) => {
+                match self.items[pos] {
+                    Entry::Word(ref w) | Entry::Punctuation(ref w) => {
                         let x = measure.at(b.factor);
-                        measure += w.measure(self.width);
-                        words.push((w, x));
+                        measure += O::measure_word(w, self.width);
+                        O::draw_word(self.surface, (x, y), w);
                     },
-                    StreamItem::Space(_, s) => {
-                        measure += s.measure(self.width);
+                    Entry::Space(_, s) => {
+                        measure += s;
                     },
-                    StreamItem::BranchEntry(len) => {
+                    Entry::BranchEntry(len) => {
                         if b.path & (1<<branches) == 0 {
                             // not taken
                             pos += len;
                         }
                         branches += 1;
                     },
-                    StreamItem::BranchExit(skip) => pos += skip,
-                    StreamItem::Linebreak(_) => unreachable!()
+                    Entry::BranchExit(skip) => pos += skip,
+                    Entry::Linebreak(_) => unreachable!(),
+                    _ => {}
                 }
                 pos += 1;
             }
             
-            lines.push(Line {
-                height: measure.height,
-                words:  words
-            });
+            y += measure.height;
         }
-        
-        lines
     }
     
-    fn complete_line(&self, nodes: &mut Vec<Entry>, c: LineContext) -> usize {
-        use layout::Flex;
+    fn complete_line(&self, nodes: &mut Vec<Option<LineBreak>>, c: LineContext) -> usize {
         let mut last = c.begin;
         let mut c = c;
         
         while c.pos < self.items.len() {
             let n = c.pos;
-            let ref item = self.items[n];
-            match item {
-                &StreamItem::Word(ref w) => {
-                    c.measure += w.measure(self.width);
+            match self.items[n] {
+                Entry::Word(ref w) | Entry::Punctuation(ref w) => {
+                    c.measure += O::measure_word(w, self.width);
                 },
-                &StreamItem::Space(breaking, ref s) => {
+                Entry::Space(breaking, s) => {
                     if breaking {
                         // breaking case:
                         // width is not added yet!
@@ -153,9 +140,9 @@ impl<'a, W: Flex + Debug + Clone, M: Flex + Debug + Clone> ParagraphLayout<'a, W
                     }
                     
                     // add width now.
-                    c.measure += s.measure(self.width);
+                    c.measure += s;
                 }
-                &StreamItem::Linebreak(fill) => {
+                Entry::Linebreak(fill) => {
                     if fill {
                         if self.width > c.measure.stretch {
                             c.measure.stretch = self.width;
@@ -164,13 +151,13 @@ impl<'a, W: Flex + Debug + Clone, M: Flex + Debug + Clone> ParagraphLayout<'a, W
                             }
                         }
                     }
-                
+                    
                     if self.maybe_update(&c, &mut nodes[n+1]) {
                         last = n+1;
                     }
                     break;
                 },
-                &StreamItem::BranchEntry(len) => {
+                Entry::BranchEntry(len) => {
                     use std::cmp;
                     // b 
                     let b_last = self.complete_line(
@@ -188,9 +175,10 @@ impl<'a, W: Flex + Debug + Clone, M: Flex + Debug + Clone> ParagraphLayout<'a, W
                     c.pos += len;
                     c.branches += 1;
                 },
-                &StreamItem::BranchExit(skip) => {
+                Entry::BranchExit(skip) => {
                     c.pos += skip;
                 }
+                _ => {}
             }
             
             if c.measure.shrink > self.width {
@@ -204,47 +192,28 @@ impl<'a, W: Flex + Debug + Clone, M: Flex + Debug + Clone> ParagraphLayout<'a, W
     }
     
     
-    fn maybe_update(&self, c: &LineContext, node: &mut Entry) -> bool {
-        let width = self.width;
-        let ref m = c.measure;
-        
-        if width < m.shrink {
-            return false;
-        }
-        
-        let factor = if width == m.width {
-            1.0
-        } else {
-            let delta = width - m.width; // d > 0 => stretch, d < 0 => shrink
-            let diff = if delta >= 0. {
-                m.stretch - m.width
-            } else {
-                m.width - m.shrink
+    fn maybe_update(&self, c: &LineContext, node: &mut Option<LineBreak>) -> bool {
+        if let Some(factor) = c.measure.factor(self.width) {
+            let break_score = c.score - factor * factor;
+            let break_point = LineBreak {
+                prev:   c.begin,
+                path:   c.path,
+                factor: factor,
+                score:  break_score
             };
-            delta / diff
-        };
-        let break_score = c.score - factor * factor;
-        match *node {
-            None => {
-                *node = Some(LineBreak {
-                    prev:   c.begin,
-                    path:   c.path,
-                    factor: factor,
-                    score:  break_score
-                } );
-            },
-            Some(other)
-            if break_score > other.score => {
-                *node = Some(LineBreak {
-                    prev:   c.begin,
-                    path:   c.path,
-                    factor: factor,
-                    score:  break_score
-                } );
-            },
-            _ => {}
+            match *node {
+                None => {
+                    *node = Some(break_point);
+                },
+                Some(other) if break_score > other.score => {
+                    *node = Some(break_point);
+                },
+                _ => {}
+            }
+            true
+        } else {
+            false
         }
-        true
     }
 }
  

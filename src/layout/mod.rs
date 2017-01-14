@@ -1,116 +1,41 @@
-use std::sync::Arc;
-use std::iter::FromIterator;
-use std::ops::{AddAssign, Mul};
-use std::fmt::Debug;
-use output::{Output};
+use std::fmt::{self, Debug};
+use units::*;
 
 // to flex or not to flex?
 #[allow(unused_variables)]
 pub trait Flex {
-    fn stretch(&self, line_width: f32) -> f32 { 0.0 }
-    fn shrink(&self, line_width: f32) -> f32 { 0.0 }
-    fn width(&self, line_width: f32) -> f32;
-    fn height(&self, line_width: f32) -> f32 { 0.0 }
-    
-    fn measure(&self, line_width: f32) -> FlexMeasure {
-        FlexMeasure {
-            shrink:     self.shrink(line_width),
-            stretch:    self.stretch(line_width),
-            width:      self.width(line_width),
-            height:     self.height(line_width)
-        }
-    }
+    fn measure(&self, line_width: f32) -> FlexMeasure;
     
     fn flex(&self, factor: f32) -> FlexMeasure {
-        let w = self.width(0.);
+        let m = self.measure(0.);
         FlexMeasure {
-            width: w,
-            shrink: w / factor,
-            stretch: w * factor,
-            height: self.height(0.)
+            width: m.width,
+            shrink: m.shrink / factor,
+            stretch: m.stretch * factor,
+            height: m.height
         }
     }
 }
 
 
-#[derive(Copy, Clone, Debug)]
-pub struct FlexMeasure {
-    shrink:     f32,
-    stretch:    f32,
-    width:      f32,
-    height:     f32
-}
 
-impl FlexMeasure {
-    pub fn zero() -> FlexMeasure {
-        FlexMeasure {
-            width: 0.,
-            stretch: 0.,
-            shrink: 0.,
-            height: 0.
-        }        
-    }
-    /// factor = -1 => self.shrink,
-    /// factor =  0 => self.width,
-    /// factor = +1 => self.stretch
-    pub fn at(&self, factor: f32) -> f32 {
-        (if factor < 0. {
-            (self.width - self.shrink)
-        } else {
-            (self.stretch - self.width)
-        } * factor + self.width)
-    }
-}
-impl AddAssign for FlexMeasure {
-    fn add_assign(&mut self, rhs: FlexMeasure) {
-        self.width += rhs.width;
-        self.stretch += rhs.stretch;
-        self.shrink += rhs.shrink;
-        self.height = self.height.max(rhs.height);
-    }
-}
-impl Mul<f32> for FlexMeasure {
-    type Output = FlexMeasure;
-    
-    fn mul(self, f: f32) -> FlexMeasure {
-        FlexMeasure {
-            width:      self.width * f,
-            stretch:    self.stretch * f,
-            shrink:     self.shrink * f,
-            height:     self.height
-        }        
-    }
-}
-impl Flex for FlexMeasure {
-    fn stretch(&self, _: f32) -> f32 { self.stretch }
-    fn shrink(&self, _: f32) -> f32 { self.shrink }
-    fn width(&self, _: f32) -> f32 { self.width }
-    fn height(&self, _: f32) -> f32 { self.height }
-    
-    fn measure(&self, _: f32) -> FlexMeasure {
-        *self
-    }
-    
-    fn flex(&self, _: f32) -> FlexMeasure {
-        FlexMeasure {
-            width: self.width,
-            shrink: self.shrink,
-            stretch: self.stretch,
-            height: self.height
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum StreamItem<W, M> {
+#[derive(Debug)]
+pub enum Entry<W> {
     /// A single word (sequence of glyphs)
     Word(W),
+    
+    /// Punctuation ('"', ',', '.', '-', …)
+    /// is positioned in the margin if at the beginning or end of the line
+    Punctuation(W),
+    
+    
+    Object(Box<Object>),
     
     /// Continue on the next line (fill)
     Linebreak(bool),
     
     /// (breaking, measure)
-    Space(bool, M),
+    Space(bool, FlexMeasure),
     
     /// Somtimes there are different possiblites of representing something.
     /// A Branch solves this by splitting the stream in two parts.
@@ -128,10 +53,10 @@ pub enum StreamItem<W, M> {
     
     /// Each BranchEntry is followed by BranchExit. It specifies the number of
     /// items to skip.
-    BranchExit(usize)
+    BranchExit(usize),
 }
 
-pub type StreamVec<Word, Measure> = Vec<StreamItem<Word, Measure>>;
+pub type StreamVec<Word> = Vec<Entry<Word>>;
 
 #[derive(Copy, Clone)]
 pub struct Atom<'a> {
@@ -148,24 +73,52 @@ impl<'a> Atom<'a> {
         }
     }
 }
+impl<'a> fmt::Display for Atom<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}{}{}", self.left, self.text, self.right)
+    }
+}
+
+
 pub trait BranchGenerator<'a> {
     fn add(&mut self, &mut FnMut(&mut Writer));
+}
+
+pub trait Object: Debug {
+    fn measure(&self, primary: Length) -> FlexMeasure;
+    fn show(&self, out: &mut Surface);
+    fn glue(&self) -> (Glue, Glue);
 }
 
 pub trait Writer {
     // a single word, ignoring glue
     fn word(&mut self, word: Atom);
     
-    fn branch(&mut self, left: Glue, right: Glue, ways: usize, &mut FnMut(&mut BranchGenerator));
+    // 
+    fn punctuation(&mut self, p: Atom);
+    
+    fn branch(&mut self, &mut FnMut(&mut BranchGenerator));
     
     fn promote(&mut self, glue: Glue);
+    
+    fn object(&mut self, item: Box<Object>);
+    
+    fn section(&mut self, f: &mut FnMut(&mut Writer), name: &str);
 }
+
+pub trait Surface {
+    fn primary(&self) -> Length;
+    fn secondary(&self) -> Option<Length>;
+}
+
 
 // private mods
 mod glue;
 mod paragraph;
 mod generic_writer;
+mod flex;
 
 pub use self::glue::Glue;
 pub use self::paragraph::ParagraphLayout;
 pub use self::generic_writer::{GenericWriter};
+pub use self::flex::FlexMeasure;

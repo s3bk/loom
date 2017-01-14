@@ -1,5 +1,5 @@
-use output::Output;
 use std::ops::{BitOr, BitOrAssign};
+use std::fmt;
 
 #[derive(Copy, Clone)]
 pub enum Glue {
@@ -75,10 +75,19 @@ impl Glue {
     pub fn hfill() -> Glue {
         Glue::Newline { fill: true }
     }
+    pub fn any() -> Glue {
+        Glue::Space { breaking: true, scale: 1.0 }
+    }
 }
-pub struct Word<'a> {
-    text:   &'a str,
-    left:   Glue,
-    right:  Glue
+
+impl fmt::Display for Glue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Glue::None => Ok(()),
+            Glue::Space { breaking: true, .. } => write!(f, "␣"),
+            Glue::Space { breaking: false, .. } => write!(f, "~"),
+            Glue::Newline { fill: _ } => write!(f, "␤")
+        }
+    }
 }
 

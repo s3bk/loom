@@ -1,13 +1,15 @@
-use layout::{Flex, FlexMeasure, ParagraphLayout, StreamVec};
+use layout::{Flex, FlexMeasure, ParagraphLayout, StreamVec, Surface};
 use image::{GrayImage, Luma};
 use std::collections::HashMap;
 use std::error::Error;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::path::Path;
+use std::io;
 use rusttype;
 use std::fmt::{Debug, self};
-use output::{Output, VectorOutput};
-
+use output::{Output};
+use units::*;
 
 #[derive(Clone)]
 pub struct RustTypeFont {
@@ -84,13 +86,18 @@ impl RustTypeWordInner {
         for g in it {
             if let Some(bb) = g.pixel_bounding_box() {
                 g.draw(|x, y, v| {
-                    saturate(
-                        image.get_pixel_mut(
-                            (x as i32 + bb.min.x) as u32,
-                            (y as i32 + bb.min.y) as u32
-                        ),
-                        ((v * 255.) as u8)
-                    );
+                    let px = x as i32 + bb.min.x;
+                    let py = y as i32 + bb.min.y;
+                    if px >= 0 && px < image.width() as i32 &&
+                       py >= 0 && py < image.height() as i32 {
+                        saturate(
+                            image.get_pixel_mut(
+                                px as u32,
+                                py as u32
+                            ),
+                            ((v * 255.) as u8)
+                        );
+                    }
                 });
             }
         }
@@ -98,18 +105,15 @@ impl RustTypeWordInner {
 }
 #[allow(unused_variables)]
 impl Flex for RustTypeWord {
-    fn width(&self, line_width: f32) -> f32 {
-        self.inner.width
-    }
-    fn shrink(&self, line_width: f32) -> f32 {
-        self.inner.width
-    }
-    fn stretch(&self, line_width: f32) -> f32 {
-        self.inner.width
-    }
-    fn height(&self, line_width: f32) -> f32 {
+    fn measure(&self, line_width: f32) -> FlexMeasure {
         let m = self.inner.font.v_metrics(self.inner.scale);
-        m.line_gap + m.ascent - m.descent
+        
+        FlexMeasure {
+            shrink:     self.inner.width,
+            stretch:    self.inner.width,
+            width:      self.inner.width,
+            height:     m.line_gap + m.ascent - m.descent
+        }
     }
 }
 impl RustTypeWord {
@@ -128,57 +132,27 @@ impl PngOutput {
         PngOutput {}
     }
     
-    pub fn render(&mut self, stream: &StreamVec<RustTypeWord, FlexMeasure>, width: f32)
-     -> GrayImage
-    {
-        use std::time::SystemTime;
-        
-        fn m(label: &str, t0: SystemTime, t1: SystemTime) {
-            let d = t1.duration_since(t0).unwrap();
-            println!("{} {:01}.{:09}s", label, d.as_secs(), d.subsec_nanos());
+    pub fn surface(&self, size: Size) -> PngSurface {
+        PngSurface {
+            image: GrayImage::from_pixel(
+                size.0 as u32,
+                size.1 as u32,
+                Luma { data: [255u8] }
+            )
         }
-        
-        let t2 = SystemTime::now();
-        let margin_v = 10.0;
-        let margin_h = 10.0;
-        
-        let lines = ParagraphLayout::new(stream, width).run();
-        let height: f32 = lines.iter().map(|l| l.height).sum();
-        let mut image = GrayImage::from_pixel(
-            (width + 2. * margin_h) as u32,
-            (height + 2. * margin_v) as u32,
-            Luma { data: [255u8] }
-        );
-        
-        let t3 = SystemTime::now();
-        m("layout:     ", t2, t3);
-        
-        let mut y = margin_v;
-        for line in lines.iter() {
-            y += line.height;
-            for &(ref word, x) in line.words.iter() {
-                word.draw_at(&mut image, (x+margin_h, y));
-            }
-        }
-        let t4 = SystemTime::now();
-        m("drawing:    ", t3, t4);
-        
-        image
     }
 }
 
 impl Output for PngOutput {
     type Word = RustTypeWord;
     type Font = RustTypeFont;
-    type Measure = FlexMeasure;
+    type UnscaledFont = UnscaledRustTypeFont;
+    type Surface = PngSurface;
     
     fn measure(font: &RustTypeFont, word: &str) -> RustTypeWord {
         font.measure(word)
     }
     
-    fn measure_space(font: &RustTypeFont, scale: f32) -> FlexMeasure {
-        font.measure(" ").flex(2.0) * scale
-    }
     
     fn default_font(&mut self) -> RustTypeFont {
         self.scale(&UnscaledRustTypeFont {
@@ -189,12 +163,14 @@ impl Output for PngOutput {
             ).font_at(0).unwrap()
         }, 18.)
     }
-}
-impl VectorOutput for PngOutput {
-    type MeasureV = FlexMeasure;
-    type WordV = RustTypeWord;
-    type UnscaledFont = UnscaledRustTypeFont;
     
+    
+    fn measure_space(font: &RustTypeFont, scale: f32) -> FlexMeasure {
+        font.measure(" ").flex(2.0) * scale
+    }
+    fn measure_word(w: &RustTypeWord, line_width: f32) -> FlexMeasure {
+        w.measure(line_width)
+    }
     fn scale(&self, font: &UnscaledRustTypeFont, size: f32) -> RustTypeFont {
         RustTypeFont {
             font:   font.font.clone(),
@@ -215,4 +191,27 @@ impl VectorOutput for PngOutput {
             font: rusttype::FontCollection::from_bytes(data).font_at(0).unwrap()
         })
     }
+    
+    fn draw_word(surface: &mut PngSurface, pos: Point, word: &RustTypeWord) {
+        word.draw_at(&mut surface.image, pos);
+    }
+}
+
+pub struct PngSurface {
+    image: GrayImage
+}
+impl PngSurface {
+    pub fn save(&self, p: &Path) -> io::Result<()> {
+        self.image.save(p)
+    }
+}
+impl Surface for PngSurface {
+    fn primary(&self) -> Length {
+        self.image.width() as Length
+    }
+    fn secondary(&self) -> Option<Length> {
+        Some(self.image.height() as Length)
+    }
+    
+    //fn region(&self, rect: Rect) -> Surface<'a>;
 }

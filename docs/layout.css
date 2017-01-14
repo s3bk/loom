@@ -42,3 +42,7 @@ section#target > loom-line {
 loom-word {
     text-align: right;
 }
+#measure {
+    width: 100em;
+    overflow: hidden;
+}

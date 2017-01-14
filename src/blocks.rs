@@ -1,51 +1,30 @@
-use std::sync::Arc;
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 use environment::{GraphChain, LocalEnv, Fields};
 use document::*;
 use parser;
 use io::IoRef;
-use output::Output;
-use layout::{Atom, Glue, Writer, Flex};
+use layout::{Atom, Glue, Writer};
 use inlinable_string::InlinableString;
 
 
-struct ErrorBlock(String);
-impl Node for ErrorBlock {
-    fn layout(&self, env: GraphChain, w: &mut Writer) {
-        w.word(Atom {
-            left:   Glue::space(),
-            right:  Glue::nbspace(),
-            text:   "Error"
-        });
-        w.word(Atom {
-            left:   Glue::nbspace(),
-            right:  Glue::space(),
-            text:   &self.0
-        });
-    }
-}
-
-
 /// process the block and return the resulting layoutgraph
-fn process_block(io: IoRef, env: GraphChain, b: &parser::Block) -> P<Node> {
+fn process_block(io: IoRef, env: GraphChain, b: &parser::Block) -> NodeP {
     // look up the name
     println!("process_block name: {}", b.name);
-    P::from(Pattern::from_block(io, env, b)).into()
+    Ptr::from(Pattern::from_block(io, env, b)).into()
 }
 
-type DefinitionListP = P<NodeList<P<Definition>>>;
-
-fn process_body(io: IoRef, env: GraphChain, childs: &[parser::Body]) -> P<NodeList<NodeP>> {
+fn process_body(io: IoRef, env: GraphChain, childs: &[parser::Body]) -> NodeListP {
     use parser::Body;
     
-    P::new(NodeList::from(io.clone(),
+    Ptr::new(NodeList::from(io.clone(),
         childs.iter()
         .map(|node| match node {
             &Body::Block(ref b) => process_block(io.clone(), env, b),
-            &Body::Leaf(ref items) => P::new(Leaf::from(io.clone(), env, &items)).into(),
-            &Body::List(ref items) => P::new(List::from(io.clone(), env, items)).into(),
-            &Body::Placeholder(ref v) => P::new(process_placeholder(env, v)).into()
+            &Body::Leaf(ref items) => Ptr::new(Leaf::from(io.clone(), env, &items)).into(),
+            &Body::List(ref items) => Ptr::new(List::from(io.clone(), env, items)).into(),
+            &Body::Placeholder(ref v) => Ptr::new(process_placeholder(env, v)).into()
         })
     ))
 }
@@ -81,8 +60,8 @@ impl Punctuation {
     }
 }
 impl Node for Punctuation {
-    fn layout(&self, env: GraphChain, w: &mut Writer) {
-        w.word(Atom {
+    fn layout(&self, _env: GraphChain, w: &mut Writer) {
+        w.punctuation(Atom {
             text:   &self.content,
             left:   Glue::None,
             right:  Glue::space()
@@ -94,23 +73,28 @@ pub struct Symbol {
     content:    InlinableString,
 }
 impl Symbol {
-    pub fn new(s: &str) -> Symbol {
+    pub fn new(env: GraphChain, s: &str) -> Symbol {
+        let s = match env.get_symbol(s) {
+            Some(sym) => sym,
+            None => s
+        };
+        
         Symbol {
             content:    s.into(),
         }
     }
 }
 impl Node for Symbol {
-    fn layout(&self, env: GraphChain, w: &mut Writer) {
+    fn layout(&self, _env: GraphChain, w: &mut Writer) {
         w.word(Atom {
             text:   &self.content,
-            left:   Glue::space(),
-            right:  Glue::space()
+            left:   Glue::None,
+            right:  Glue::None
         });
     }
 }
 
-fn process_placeholder(env: GraphChain, v: &parser::Var) -> Placeholder {
+fn process_placeholder(_env: GraphChain, v: &parser::Var) -> Placeholder {
     use parser::Var;
     
     match v {
@@ -126,35 +110,12 @@ fn item_node(io: IoRef, env: GraphChain, i: &parser::Item) -> NodeP {
     use parser::Item;
     
     match i {
-        &Item::Word(ref s) => P::new(Word::new(s)).into(),
-        &Item::Symbol(ref s) => P::new(Symbol::new(s)).into(),
-        &Item::Punctuation(ref s) => P::new(Punctuation::new(s)).into(),
-        &Item::Placeholder(ref v) => P::new(process_placeholder(env, v)).into(),
-        &Item::Token(ref s) => P::new(TokenNode::from(env, s)).into(),
+        &Item::Word(ref s) => Ptr::new(Word::new(s)).into(),
+        &Item::Symbol(ref s) => Ptr::new(Symbol::new(env, s)).into(),
+        &Item::Punctuation(ref s) => Ptr::new(Punctuation::new(s)).into(),
+        &Item::Placeholder(ref v) => Ptr::new(process_placeholder(env, v)).into(),
+        &Item::Token(ref s) => Ptr::new(Word::new(s)).into(),
         &Item::Group(ref g) => Group::from(io, env, g).into()
-    }
-}
-
-pub struct TokenNode {
-  //  token:  TokenStream
-}
-impl TokenNode {
-    fn from(env: GraphChain, name: &str) -> TokenNode {
-    /*    let mut token = TokenStream::new();
-        match env.get_token(name) {
-            Some(ts) => {
-                token.extend(ts);
-            },
-            None => {}
-        }*/
-        TokenNode {
-           // token: token
-        }
-    }
-}
-impl Node for TokenNode {
-    fn layout(&self, env: GraphChain, w: &mut Writer) {
-        //s.extend(&self.token);
     }
 }
 
@@ -164,12 +125,12 @@ pub struct Group {
 }
 
 impl Group {
-    pub fn from(io: IoRef, env: GraphChain, g: &parser::Group) -> P<Group> {
-        let content = P::new(NodeList::from(io.clone(),
+    pub fn from(io: IoRef, env: GraphChain, g: &parser::Group) -> Ptr<Group> {
+        let content = Ptr::new(NodeList::from(io.clone(),
             g.content.iter().map(|n| item_node(io.clone(), env, n))
         ));
         
-        let mut g = P::new(Group {
+        let mut g = Ptr::new(Group {
             target:     GroupRef::new(g.opening, g.closing),
             fields:     Fields {
                 args:   Some(content),
@@ -246,14 +207,14 @@ impl Node for Leaf {
 }
 
 struct List {
-    items: NodeList<P<Leaf>>
+    items: NodeList<Ptr<Leaf>>
 }
 impl List {
     pub fn from(io: IoRef, env: GraphChain, items: &[Vec<parser::Item>]) -> List {
         List {
             items: NodeList::from(
                 io.clone(),
-                items.iter().map(|i| P::new(Leaf::from(io.clone(), env, i))
+                items.iter().map(|i| Ptr::new(Leaf::from(io.clone(), env, i))
             ))
         }
     }
@@ -282,14 +243,14 @@ fn init_env(io: IoRef, env: GraphChain, body: &parser::BlockBody) -> LocalEnv {
         
         match env.get_command(cmd.name) {
             Some(c) => {
-                c(io.clone(), env, &mut local_env, &cmd.args);
+                c(io.clone(), env, &mut local_env, &cmd.args).unwrap();
             },
             None => println!("command '{}' not found", cmd.name)
         }
         
     }
     for p in body.parameters.iter() {
-        let d = P::new(Definition::from_param(io.clone(), env.link(&local_env), p));
+        let d = Ptr::new(Definition::from_param(io.clone(), env.link(&local_env), p));
         local_env.add_target(p.name, d.into());
     }
     local_env
@@ -321,10 +282,10 @@ impl Module {
             _ => panic!()
         };
         
-        let mut local_env = init_env(io.clone(), env, &body);
+        let local_env = init_env(io.clone(), env, &body);
         let body = process_body(io, env.link(&local_env), &body.childs);
         
-        P::new(Module {
+        Ptr::new(Module {
             env:    local_env,
             body:   body
         }).into()
@@ -344,13 +305,10 @@ impl Node for Module {
 }
 
 pub struct Definition {
-    // the name of the macro
-    name:       String,
-    
     args:       NodeListP,
     
     // body of the macro declaration
-    body:       P<NodeList<NodeP>>,
+    body:       Ptr<NodeList<NodeP>>,
     
     // referencing macro invocations
     references: RefCell<Vec<Weak<Node>>>,
@@ -377,23 +335,18 @@ impl Node for Definition {
 impl Definition {
     fn from_param(io: IoRef, env: GraphChain, p: &parser::Parameter) -> Definition {
         let local_env = init_env(io.clone(), env, &p.value);
-        let args = P::new(
+        let args = Ptr::new(
             NodeList::from(io.clone(),
                 p.args.iter()
                 .map(|n| item_node(io.clone(), env.link(&local_env), n))
             )
         );
         Definition {
-            name:       p.name.to_string(),
             args:       args,
             body:       process_body(io, env.link(&local_env), &p.value.childs),
             references: RefCell::new(vec![]),
             env:        local_env
         }
-    }
-    
-    fn name(&self) -> &str {
-        &self.name
     }
 }
 
@@ -409,8 +362,8 @@ pub struct Pattern {
 impl Pattern {
     fn from_block(io: IoRef, env: GraphChain, block: &parser::Block) -> NodeP {
         
-        let mut local_env = init_env(io.clone(), env, &block.body);
-        let args = P::new(
+        let local_env = init_env(io.clone(), env, &block.body);
+        let args = Ptr::new(
             NodeList::from(io.clone(),
                 block.argument.iter().map(|n| item_node(io.clone(), env.link(&local_env), n))
             )
@@ -418,7 +371,7 @@ impl Pattern {
         
         let body = process_body(io, env.link(&local_env), &block.body.childs);
         
-        let mut p = P::new(Pattern {
+        let mut p = Ptr::new(Pattern {
             target:     Ref::new(block.name.to_string()),
             env:        local_env,
             fields:     Fields {
