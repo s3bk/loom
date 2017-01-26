@@ -2,6 +2,8 @@ use nom::{self, IResult, ErrorKind, digit, Slice, InputLength, InputIter};
 use std::iter::{Iterator};
 use unicode_categories::UnicodeCategories;
 use unicode_brackets::UnicodeBrackets;
+use inlinable_string::InlinableString;
+use itertools::Itertools;
 
 #[cfg(debug_assertions)]
 use slug;
@@ -96,33 +98,41 @@ named!(indent_any,
     )
 );
 
+pub type String = InlinableString;
+
 #[derive(Debug, PartialEq)]
-pub enum Var<'a> {
-    Name(&'a str),
-    Number(usize)
+pub enum Placeholder {
+    Body,
+    Argument(usize),
+    Arguments,
+    Unknown(String)
 }
-named!(var <Var>,
+
+named!(placeholder <Placeholder>,
     alt!(
-        map!(letter_sequence, |s: Data<'a>| { Var::Name(s.into()) }) |
-        map_opt!(digit, |s: Data| { s.parse::<usize>().ok().map(Var::Number) })
+        map!(tag!("body"), {|_| Placeholder::Body })
+      | map!(tag!("args"), {|_| Placeholder::Arguments })
+      | map_opt!(digit, |s: Data| {
+            s.parse::<usize>().ok().map(|n| Placeholder::Argument(n))
+        })
     )
 );
 
 #[derive(Debug, PartialEq)]
-pub struct Group<'a> {
-    pub opening: &'a str,
-    pub closing: &'a str,
-    pub content: Vec<Item<'a>>
+pub struct Group {
+    pub opening: String,
+    pub closing: String,
+    pub content: Vec<Item>
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Item<'a> {
-    Word(&'a str),
-    Symbol(&'a str),
-    Punctuation(&'a str),
-    Placeholder(Var<'a>),
-    Token(&'a str),
-    Group(Group<'a>)
+pub enum Item {
+    Word(String),
+    Symbol(String),
+    Punctuation(String),
+    Placeholder(Placeholder),
+    Token(String),
+    Group(Group)
 }
 
 #[inline(always)]
@@ -213,6 +223,7 @@ fn test_letter_sequence() {
 }
 
 fn string_esc<'a>(input: Data<'a>) -> IResult<Data<'a>, String> {
+    use std::iter::FromIterator;
     map!(input, many1!(
         complete!(alt!(
             map!(take_until_either!("\\\""), { |d: Data<'a>| d.into() })
@@ -222,7 +233,7 @@ fn string_esc<'a>(input: Data<'a>) -> IResult<Data<'a>, String> {
           | map!(tag!(r"\ "),     { |_| " "  })
           | map!(tag!(r##"\""##), { |_| "\"" })
         ))),
-        |v: Vec<&str>| v.concat()
+        |v: Vec<&str>| InlinableString::from_iter(v.iter().flat_map(|s| s.chars()))
     )
 }
 
@@ -283,7 +294,7 @@ named!(item_symbol <Item>,
     )
 );
 named!(item_placeholder <Item>,
-    map!(preceded!(tag!("$"), var),
+    map!(preceded!(tag!("$"), placeholder),
         |v| { Item::Placeholder(v) }
     )
 );
@@ -312,7 +323,7 @@ named!(item_group <Item>,
     )
 );
 
-fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item<'a>> {
+fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item> {
     match input.iter_elements().next() {
         Some(c) => match c {
             'a' ... 'z' |
@@ -353,8 +364,8 @@ fn test_item() {
             closing: ">"
         }));
         item("foo baz") => Done(" baz", Item::Word("foo"));
-        item("$body\n") => Done("\n", Item::Placeholder(Var::Name("body")));
-        item("$3\n") => Done("\n", Item::Placeholder(Var::Number(3)));
+        item("$body\n") => Done("\n", Item::Placeholder(Placeholder::Body));
+        item("$3\n") => Done("\n", Item::Placeholder(Placeholder::Argument(3)));
         item("\n") => Error;
     );
 }
@@ -375,7 +386,7 @@ fn leaf_seperator(input: Data, expected_indent: usize) -> IResult<Data, Data> {
         space
     )
 }
-fn leaf<'a>(input: Data<'a>, expected_indent: usize) -> IResult<Data<'a>, Vec<Item<'a>>> {
+fn leaf(input: Data, expected_indent: usize) -> IResult<Data, Vec<Item>> {
     delimited!(input,
         complete!(count!(indent_any, expected_indent)),
         separated_nonempty_list!(
@@ -390,9 +401,9 @@ fn test_leaf() {
     slug!(
         leaf("x\n\ne", 0) => Done("\ne", vec![Item::Word("x")]);
         leaf("x \n", 0) => Done("", vec![Item::Word("x")]);
-        leaf("x $y\n", 0) => Done("", vec![
+        leaf("x $args\n", 0) => Done("", vec![
             Item::Word("x"),
-            Item::Placeholder(Var::Name("y"))
+            Item::Placeholder(Placeholder::Arguments)
         ]);
         leaf("x \ny\n", 0) => Done("", vec![Item::Word("x"), Item::Word("y")]);
         leaf("Hello world\nThis is the End .\n", 0) => Done("", vec![
@@ -447,38 +458,38 @@ fn test_list_item() {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Parameter<'a> {
-    pub name: &'a str,
-    pub args: Vec<Item<'a>>,
-    pub value: BlockBody<'a>
+pub struct Parameter {
+    pub name: String,
+    pub args: Vec<Item>,
+    pub value: BlockBody
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Command<'a> {
-    pub name: &'a str,
+pub struct Command {
+    pub name: String,
     pub args: Vec<String>
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Block<'a> {
-    pub name:       &'a str,
-    pub argument:   Vec<Item<'a>>,
-    pub body:       BlockBody<'a>
+pub struct Block {
+    pub name:       String,
+    pub argument:   Vec<Item>,
+    pub body:       BlockBody
 }
 
 #[derive(Debug, PartialEq)]
-pub struct BlockBody<'a> {
-    pub commands:   Vec<Command<'a>>,
-    pub parameters: Vec<Parameter<'a>>,
-    pub childs:     Vec<Body<'a>>
+pub struct BlockBody {
+    pub commands:   Vec<Command>,
+    pub parameters: Vec<Parameter>,
+    pub childs:     Vec<Body>
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Body<'a> {
-    Leaf(Vec<Item<'a>>),
-    List(Vec<Vec<Item<'a>>>),
-    Block(Block<'a>),
-    Placeholder(Var<'a>)
+pub enum Body {
+    Leaf(Vec<Item>),
+    List(Vec<Vec<Item>>),
+    Block(Block),
+    Placeholder(Placeholder)
 }
 
 #[inline(always)]
@@ -513,7 +524,7 @@ fn block_placeholder(input: Data, indent_level: usize) -> IResult<Data, Body> {
     do_parse!(input,
             count!(indent_any, indent_level)
     >>      tag!("$")
-    >> var: var
+    >> var: placeholder
     >>      endline
     >>     (Body::Placeholder(var))
     )

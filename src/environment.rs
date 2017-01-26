@@ -1,11 +1,14 @@
 use std::collections::HashMap;
-use document::{NodeP, NodeListP};
-use io::{IoRef, Directory, File, Entry};
+use std::rc::Rc;
+use std::ops::{Deref, DerefMut};
+use document::{Node, NodeP, NodeListP};
+use io::{Io};
 use hyphenation::Hyphenator;
 use commands::Command;
 use inlinable_string::InlinableString;
 use ordermap::OrderMap;
 use layout::{Atom, Glue, Writer};
+use yaio;
 
 /// The Environment can only be changed within the Block::parse call
 /// Is is therefore allowed to cache results whithin methods that do not involve
@@ -16,7 +19,7 @@ use layout::{Atom, Glue, Writer};
 
 /// used at graph creation and possibly layout
 pub struct LocalEnv {
-    paths:          Vec<Directory>,
+    paths:          Vec<yaio::Directory>,
     commands:       HashMap<String, Command>,
     targets:        HashMap<String, NodeP>,
     groups:         OrderMap<(InlinableString, InlinableString), NodeP>,
@@ -39,22 +42,6 @@ impl Fields {
     }
 }
 
-pub struct FieldLink<'a> {
-    local:  &'a Fields,
-    parent: Option<&'a FieldLink<'a>>
-}
-impl<'a> FieldLink<'a> {
-    pub fn parent(&self) -> Option<&'a FieldLink<'a>> {
-        self.parent
-    }
-    pub fn args(&self) -> Option<NodeListP> {
-        self.local.args.clone()
-    }
-    pub fn body(&self) -> Option<NodeListP> {
-        self.local.body.clone()
-    }
-}
-
 impl LocalEnv {
     pub fn new() -> LocalEnv {
         LocalEnv {
@@ -69,12 +56,12 @@ impl LocalEnv {
     pub fn add_command(&mut self, name: &str, cmd: Command) {
         self.commands.insert(name.to_owned(), cmd);
     }
-    fn add_path(&mut self, dir: Directory) {
+    fn add_path(&mut self, dir: yaio::Directory) {
         self.paths.push(dir);
     }
-    pub fn add_target(&mut self, name: &str, target: NodeP) {
+    pub fn add_target(&mut self, name: String, target: NodeP) {
         println!("add_target({}, …)", name);
-        self.targets.insert(name.to_owned(), target);
+        self.targets.insert(name, target);
     }
     pub fn add_group(&mut self, opening: &str, closing: &str, node: NodeP) {
         self.groups.insert((opening.into(), closing.into()), node);
@@ -98,56 +85,135 @@ impl LocalEnv {
     }
 }
 
-#[derive(Copy, Clone)]
-pub struct GraphChain<'a> {
-    parent:         Option<&'a GraphChain<'a>>,
-    fields:         Option<&'a FieldLink<'a>>,
-    local:          &'a LocalEnv,
+pub struct GraphLink {
+    parent: Option<GraphChain>,
+    local:  LocalEnv
 }
 
-impl<'a> GraphChain<'a> {
-    pub fn root(locals: &'a LocalEnv) -> GraphChain<'a> {
+#[derive(Clone)]
+pub struct GraphChain {
+    inner: Rc<GraphLink>
+}
+
+impl GraphChain {
+    pub fn root(local: LocalEnv) -> GraphChain {
         GraphChain {
+            inner: Rc::new(GraphLink {
+                parent: None,
+                local:  local
+            })
+        }
+    }
+    
+    pub fn link(&self, local: LocalEnv) -> GraphChain {
+        GraphChain {
+            inner: Rc::new(GraphLink {
+                parent: Some(self.clone()),
+                local:  local
+            })
+        }
+    }
+    pub fn take(self) -> LocalEnv {
+        match Rc::try_unwrap(self.inner) {
+            Ok(e) => e.local,
+            Err(_) => panic!("refcount > 1")
+        }
+    }
+    
+    fn find<F, T: ?Sized>(&self, cond: F) -> Option<&T> where
+    F: Fn(&LocalEnv) -> Option<&T>
+    {
+        if let Some(v) = cond(&self.inner.local) {
+            Some(v)
+        } else if let Some(ref parent) = self.inner.parent {
+            parent.find(cond)
+        } else {
+            None
+        }
+    }
+    
+    pub fn search_file(&self, filename: &str) -> yaio::ReadFuture {
+        yaio::search_file(filename, self.inner.local.paths.iter().cloned())
+    }
+    
+    pub fn get_target(&self, name: &str) -> Option<&NodeP> {
+        self.find(|env| env.targets.get(name))
+    }
+    
+    pub fn get_group(&self, q: &(InlinableString, InlinableString)) -> Option<&NodeP> {
+        self.find(|env| env.groups.get(q))
+    }
+
+    pub fn get_command(&self, name: &str) -> Option<&Command> {
+        self.find(|env| env.commands.get(name))
+    }
+    pub fn get_symbol(&self, name: &str) -> Option<&str> {
+        match self.find(|env| env.symbols.get(name)) {
+            Some(ref s) => Some(&*s),
+            None => None
+        }
+    }
+}
+
+impl Deref for GraphChain {
+    type Target = LocalEnv;
+    fn deref(&self) -> &LocalEnv {
+        &self.inner.local
+    }
+}
+
+#[derive(Clone)]
+pub struct LayoutChain<'a> {
+    parent: Option<&'a LayoutChain<'a>>,
+    local:  &'a LocalEnv,
+    fields: Option<&'a Fields>
+}
+impl<'a> Deref for LayoutChain<'a> {
+    type Target = LocalEnv;
+    fn deref(&self) -> &LocalEnv {
+        self.local
+    }
+}
+impl<'a> LayoutChain<'a> {
+    pub fn root(env: &LocalEnv) -> LayoutChain {
+        LayoutChain {
             parent: None,
-            local:  locals,
+            local:  env,
             fields: None
         }
     }
-    
-    pub fn link(&'a self, locals: &'a LocalEnv) -> GraphChain<'a> {
-        GraphChain {
-            parent: Some(self),
-            local:  locals,
-            fields: self.fields
+
+    pub fn link<'b: 'a, N: Node>(&'b self, node: &'b N) -> LayoutChain<'b> {
+        match node.env() {
+            Some(local) => {
+                LayoutChain {
+                    parent: Some(self),
+                    local:  local,
+                    fields: node.fields().or(self.fields)
+                }
+            }
+            None => self.clone()
+        }
+    }
+
+    fn find<'b, F, T>(&'b self, cond: F) -> Option<&'b T> where
+    F: Fn(&'b LayoutChain<'a>) -> Option<&'b T>
+    {
+        if let Some(v) = cond(self) {
+            Some(v)
+        } else if let Some(parent) = self.parent {
+            parent.find(cond)
+        } else {
+            None
         }
     }
     
-    pub fn link_fields(&'a self, fields: &'a Fields) -> FieldLink<'a> {
-        FieldLink {
-            local:  fields,
-            parent: self.fields
-        }
-    }
-    
-    pub fn with_fields(self, fields: Option<&'a FieldLink<'a>>) -> GraphChain<'a> {
-        GraphChain {
-            fields: fields,
-            ..      self
-        }
-    }
-    
-    pub fn fields(&'a self) -> Option<&FieldLink<'a>> {
-        self.fields
+    pub fn fields(&self) -> Option<&Fields> {
+        self.find(|c| c.fields())
     }
     
     pub fn hyphenator(&self) -> Option<&Hyphenator> {
-        match self.local.hyphenator {
-            Some(ref h) => Some(h),
-            None => match self.parent {
-                Some(p) => p.hyphenator(),
-                None => None
-            }
-        }
+        self.find(|c| c.hyphenator())
     }
     pub fn hyphenate(&self, w: &mut Writer, word: Atom) {
         if let Some(hyphenator) = self.hyphenator() {
@@ -183,72 +249,16 @@ impl<'a> GraphChain<'a> {
         // fallback
         w.word(word);
     }
-    
-    
-    pub fn search_file(&self, filename: &str) -> Option<File> {
-        for dir in self.local.paths.iter() {
-            match dir.get(filename) {
-                Ok(Entry::File(f)) => {
-                    return Some(f);
-                }
-                _ => {}
-            }
-        }
-        
-        match self.parent {
-            Some(p) => p.search_file(filename),
-            None => None
-        }
-    }
-    
-    pub fn get_target(&self, name: &str) -> Option<&NodeP> {
-        match self.local.targets.get(name) {
-            Some(t) => Some(t),
-            None => match self.parent {
-                Some(p) => p.get_target(name),
-                None => None
-            }
-        }
-    }
-    
-    pub fn get_group(&self, q: &(InlinableString, InlinableString)) -> Option<&NodeP> {
-        match self.local.groups.get(q) {
-            Some(t) => Some(t),
-            None => match self.parent {
-                Some(p) => p.get_group(q),
-                None => None
-            }
-        }
-    }
+}
 
-    pub fn get_command(&self, name: &str) -> Option<&Command> {
-        match self.local.commands.get(name) {
-            Some(t) => Some(t),
-            None => match self.parent {
-                Some(p) => p.get_command(name),
-                None => None
-            }
-        }
-    }
-    pub fn get_symbol(&self, name: &str) -> Option<&str> {
-        match self.local.symbols.get(name) {
-            Some(t) => Some(&t),
-            None => match self.parent {
-                Some(p) => p.get_symbol(name),
-                None => None
-            }
-        }
-    }
-}   
-
-pub fn prepare_graph(io: IoRef) -> LocalEnv {
+pub fn prepare_graph(io: &Io) -> GraphChain {
     use commands;
     
-    let data_path = io.platform().data_dir();
+    let data_path = io.base_dir();
     let mut e = LocalEnv::new();
     
     e.add_path(data_path);
     commands::register(&mut e);
     
-    e
+    GraphChain::root(e)
 }

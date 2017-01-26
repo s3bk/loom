@@ -4,11 +4,10 @@ version = "0.1.0"
 authors = ["Sebastian Köln <sebk@rynx.org>"]
 
 [features]
-default = ["output_png", "output_html", "mmap", "platform_default"]
+default = ["output_png", "output_html"]
 output_png = ["image", "rusttype"]
 output_pdf = ["pdf"]
 output_html = ["sxd-document"]
-platform_default = ["curl"]
 # target has mmap
 mmap = ["fst/mmap"]
 
@@ -19,7 +18,7 @@ roman = "*"
 rmp = "*"
 rmp-serialize = "*"
 rustc-serialize = "*"
-lz4 = "*"
+#lz4 = "*"
 #broadcast = "*"
 #mio = "*"
 #derivative = "*"
@@ -28,6 +27,9 @@ itertools = "*"
 inlinable_string = "*"
 ordermap = { git="https://github.com/bluss/ordermap" }
 num = "*"
+futures = "*"
+owning_ref = "*"
+
 
 [dependencies.fst]
 version = "*"
@@ -61,9 +63,8 @@ git = "https://github.com/s3bk/woot.git"
 version = "*"
 optional = true
 
-[dependencies.curl]
-version = "*"
-optional = true
+[dependencies.yaio]
+path = "../YaIo"
 
 [[bin]]
 name = "profile_parser"

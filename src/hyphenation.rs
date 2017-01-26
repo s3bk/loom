@@ -3,8 +3,8 @@ use std::io;
 use std::ops;
 use std::fs;
 use std::collections::BTreeMap;
-use fst::{Map, MapBuilder};
-use io::{File, Result};
+use fst::{Map, MapBuilder, Error};
+use futures::Future;
 
 #[derive(Clone)]
 pub struct Hyphen {
@@ -102,27 +102,22 @@ impl Hyphenator {
         }
     }
     
-    pub fn load(file: &File) -> Result<Hyphenator> {
-        #[cfg(not(feature = "mmap"))]
-        let map_o = None;
-        #[cfg(feature = "mmap")]
-        let map_o: Option<Map> = match file.path() {
-            Some(p) => Some(Map::from_path(p)?),
-            None => None
-        };
-        
-        let map = match map_o {
-            Some(m) => m,
-            None => {
-                let data = file.read()?;
-                Map::from_bytes(data)?
-            }
-        };
-        
+    #[cfg(feature = "mmap")]
+    pub fn load_file(file: Path) -> Result<Hyphenator, Error> {
         Ok(Hyphenator {
-            map: map,
+            map: Map::from_path(p),
             changes: BTreeMap::new()
         })
+    }
+    
+    pub fn load(data: Vec<u8>) -> Result<Hyphenator, Error> {
+        match Map::from_bytes(data) {
+            Ok(map) => Ok(Hyphenator {
+                map: map,
+                changes: BTreeMap::new()
+            }),
+            Err(e) => Err(e)
+        }
     }
     
     pub fn empty() -> Hyphenator {
@@ -133,6 +128,7 @@ impl Hyphenator {
         }
     }
     
+    // TODO: Asyncify
     pub fn save(&self, path: &Path) {
         let fst_tmp = path.with_extension("fst.part");
         
@@ -228,6 +224,7 @@ impl Hyphenator {
         fs::rename(fst_tmp, path).expect("could not rename tempfile");
     }
     
+    // TODO: Asyncify
     pub fn add_hyphenlist(&mut self, path: &Path) {
         use std::io::BufRead;
         let reader = io::BufReader::new(

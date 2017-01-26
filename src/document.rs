@@ -1,12 +1,14 @@
 use std::iter::Iterator;
 use std::ops::Deref;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 use layout::{Atom, Writer};
-use environment::{LocalEnv, GraphChain};
-use io::{Stamp, IoRef};
+use environment::{LocalEnv, GraphChain, Fields, LayoutChain};
+use io::{Stamp, Io, AioError};
 use woot::WString;
 use inlinable_string::InlinableString;
+use futures::{future, Future, BoxFuture};
+pub use parser::Placeholder;
 
 /// The Document is a Directed Acyclic Graph.
 ///
@@ -32,7 +34,7 @@ pub trait Node {
     fn modified(&self) {}
     
     /// compute layout graph
-    fn layout(&self, env: GraphChain, w: &mut Writer);
+    fn layout(&self, env: LayoutChain, w: &mut Writer);
     
     /// ?
     fn add_ref(&self, _: &Rc<Node>) {}
@@ -40,27 +42,30 @@ pub trait Node {
     fn env(&self) -> Option<&LocalEnv> {
         None
     }
+    fn fields(&self) -> Option<&Fields> {
+        None
+    }
 }
 
 pub struct Ptr<N: ?Sized + Node> {
-    rc: Rc<N>,
+    inner: Rc<N>,
     //references: LinkedList<Ptr<N>>
 }
 impl<N: ?Sized> Node for Ptr<N> where N: Node {
     fn childs(&self, out: &mut Vec<NodeP>) {
-        self.rc.childs(out)
+        self.inner.childs(out)
     }
     fn modified(&self) {
-        self.rc.modified()
+        self.inner.modified()
     }
-    fn layout(&self, env: GraphChain, w: &mut Writer) {
-        self.rc.layout(env, w)
+    fn layout(&self, env: LayoutChain, w: &mut Writer) {
+        self.inner.layout(env, w)
     }
 }
 impl<N> Ptr<N> where N: Node {
     pub fn new(n: N) -> Ptr<N> {
         Ptr {
-            rc: Rc::new(n),
+            inner: Rc::new(n),
             //references: LinkedList::new()
         }
     }
@@ -68,7 +73,7 @@ impl<N> Ptr<N> where N: Node {
 impl<N> From<Ptr<N>> for Ptr<Node> where N: Node + Sized + 'static {
     fn from(n: Ptr<N>) -> Ptr<Node> {
         Ptr {
-            rc: n.rc as Rc<Node>
+            inner: n.inner as Rc<Node>
         }
     }
 }
@@ -77,39 +82,36 @@ impl<N: ?Sized> Deref for Ptr<N> where N: Node {
     type Target = N;
     
     fn deref(&self) -> &N {
-        self.rc.deref()
+        self.inner.deref()
     }
 }
 impl<N> Ptr<N> where N: Node {
     pub fn get_mut(&mut self) -> Option<&mut N> {
-        Rc::get_mut(&mut self.rc)
+        Rc::get_mut(&mut self.inner)
     }
 }
 impl<N: ?Sized> Clone for Ptr<N> where N: Node {
     fn clone(&self) -> Ptr<N> {
         Ptr {
-            rc: self.rc.clone()
+            inner: self.inner.clone()
         }
     }
 }
 
-pub enum Placeholder {
-    Body,
-    Argument(usize),
-    Arguments,
-    Unknown(String)
-}
 impl Node for Placeholder {
-    fn layout(&self, env: GraphChain, w: &mut Writer) {
-        let fields = env.fields().unwrap();
-        let n: Option<NodeP> = match self {
-            &Placeholder::Body => fields.body().map(|n| n.into()),
-            &Placeholder::Argument(i) => fields.args()
-                .and_then(|n| n.iter().nth(i).cloned()),
-            &Placeholder::Arguments => fields.args().map(|n| n.into()),
-            _ => None
+    fn layout(&self, env: LayoutChain, w: &mut Writer) {
+        let n = {
+            let fields = env.fields().unwrap();
+            let n: Option<NodeP> = match self {
+                &Placeholder::Body => fields.body.clone().map(|n| n.into()),
+                &Placeholder::Argument(i) => fields.args.clone()
+                    .and_then(|n| n.iter().nth(i).cloned()),
+                &Placeholder::Arguments => fields.args.clone().map(|n| n.into()),
+                _ => None
+            };
+            n
         };
-        n.map(|n| n.layout(env.with_fields(fields.parent()), w))
+        n.map(|n| n.layout(env, w))
         .unwrap_or_else(|| {
             println!("no macro set");
             match self {
@@ -133,8 +135,9 @@ impl Ref {
             target: RefCell::new(None)
         }
     }
-    pub fn resolve(&mut self, env: GraphChain) {
+    pub fn resolve(self, env: &GraphChain) -> Ref {
         *self.target.borrow_mut() = env.get_target(&self.name).cloned();
+        self
     }
     pub fn get(&self) -> Option<NodeP> {
         match *self.target.borrow() {
@@ -152,14 +155,16 @@ pub struct GroupRef {
     target: RefCell<Option<NodeP>>
 }
 impl GroupRef {
-    pub fn new(opening: &str, closing: &str) -> GroupRef {
+    pub fn new(opening: InlinableString, closing: InlinableString) -> GroupRef {
         GroupRef {
-            key:    (opening.into(), closing.into()),
+            key:    (opening, closing),
             target: RefCell::new(None)
         }
     }
-    pub fn resolve(&mut self, env: GraphChain) {
-        *self.target.borrow_mut() = env.get_group(&self.key).cloned();
+    pub fn resolve(&mut self, env: &GraphChain) {
+        if let Some(target) = env.get_group(&self.key) {
+            *self.target.borrow_mut() = Some(target.clone());
+        }
     }
     pub fn get(&self) -> Option<NodeP> {
         match *self.target.borrow() {
@@ -179,7 +184,7 @@ impl<T> NodeList<T> where T: Node + Clone {
     pub fn iter<'a>(&'a self) -> impl Iterator<Item=&'a T> {
         self.ws.iter()
     }
-    pub fn from<I>(io: IoRef, iter: I) -> NodeList<T>
+    pub fn from<I>(io: &Io, iter: I) -> NodeList<T>
     where I: Iterator<Item=T> {
         let mut ws = WString::new();
         
@@ -205,9 +210,9 @@ impl<T> Node for NodeList<T> where T: Node + Sized + Clone + Into<NodeP> {
             out.push(n.clone().into());
         }
     }
-    fn layout(&self, env: GraphChain, w: &mut Writer) {
+    fn layout(&self, env: LayoutChain, w: &mut Writer) {
         for n in self.iter() {
-            n.layout(env, w);
+            n.layout(env.clone(), w);
         }
     }
 }

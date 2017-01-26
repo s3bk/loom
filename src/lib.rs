@@ -2,7 +2,8 @@
 #![feature(conservative_impl_trait)]
 #![feature(box_syntax)]
 #![feature(custom_attribute)]
-#![feature(non_ascii_idents)]
+#![feature(unboxed_closures)]
+#![feature(fnbox)]
 #![feature(link_args)]
 
 //#[macro_use] extern crate derivative;
@@ -16,14 +17,16 @@ extern crate fst;
 extern crate rmp;
 extern crate rmp_serialize;
 extern crate rustc_serialize;
-extern crate lz4;
+//extern crate lz4;
 extern crate woot;
 //extern crate mio;
-//extern crate futures;
+extern crate futures;
 //extern crate curl;
 extern crate inlinable_string;
 extern crate ordermap;
 extern crate num;
+extern crate yaio;
+extern crate owning_ref;
 
 #[cfg(feature = "output_png")]
 extern crate image;
@@ -50,4 +53,19 @@ pub mod commands;
 pub mod output;
 pub mod slug;
 pub mod units;
-pub mod platform;
+
+pub enum LoomError {
+    Io(yaio::AioError),
+    MissingArg(&'static str),
+    Fst(fst::Error)
+}
+impl From<yaio::AioError> for LoomError {
+    fn from(e: yaio::AioError) -> LoomError {
+        LoomError::Io(e)
+    }
+}
+impl From<fst::Error> for LoomError {
+    fn from(e: fst::Error) -> LoomError {
+        LoomError::Fst(e)
+    }
+}

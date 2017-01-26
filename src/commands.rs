@@ -1,59 +1,22 @@
 use environment::{LocalEnv, GraphChain};
-use io::IoRef;
+use io::{Io, AioError};
+use document::NodeP;
 use std::error::Error;
 use std::fmt::{self, Display};
+use std::boxed::FnBox;
+use futures::{Future, BoxFuture};
+use futures::future::{ok, err, join_all};
+use inlinable_string::InlinableString;
+use super::LoomError;
 use std;
-use platform;
 
 pub fn register(env: &mut LocalEnv) {
-    env.add_command("fontsize",     cmd_fontsize);
+ // env.add_command("fontsize",     cmd_fontsize);
     env.add_command("group",        cmd_group);
     env.add_command("hyphens",      cmd_hyphens);
     env.add_command("load",         cmd_load);
-    env.add_command("use",          cmd_use);
+ // env.add_command("use",          cmd_use);
     env.add_command("symbol",       cmd_symbol);
-}
-
-#[derive(Debug)]
-pub enum CommandError {
-    Message(&'static str),
-    Missing(&'static str),
-    Other(Box<Error>)
-}
-impl Error for CommandError {
-    fn description(&self) -> &str {
-        match *self {
-            CommandError::Message(msg) => msg,
-            CommandError::Missing(msg) => msg,
-            CommandError::Other(ref e) => e.description()
-        }
-    }
-
-    fn cause(&self) -> Option<&Error> {
-        match *self {
-            CommandError::Other(ref e) => e.cause(),
-            _ => None
-        }
-    }
-}
-impl Display for CommandError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            CommandError::Message(msg) => write!(f, "{}", msg),
-            CommandError::Missing(msg) => write!(f, "missing {}", msg),
-            CommandError::Other(ref e) => e.fmt(f)
-        }
-    }
-}
-impl From<std::num::ParseFloatError> for CommandError {
-    fn from(e: std::num::ParseFloatError) -> CommandError {
-        CommandError::Other(box e)
-    }
-}
-impl From<platform::Error> for CommandError {
-    fn from(e: platform::Error) -> CommandError {
-        CommandError::Other(box e)
-    }
 }
 
 macro_rules! try_msg {
@@ -70,33 +33,39 @@ macro_rules! try_msg {
 
 macro_rules! cmd_args {
     ($args:expr; $($out:ident ,)+) => {
-        let mut iter = $args.iter();
+        let mut iter = $args.drain(..);
         $(
         let $out = match iter.next() {
             Some(v) => v,
-            None => return Err(CommandError::Missing(stringify!(out)))
+            None => return box err(LoomError::MissingArg(stringify!(out)))
         };
         )+
     };
 }
 
-pub type CommandResult = Result<(), CommandError>;
-pub type Command = fn(IoRef, GraphChain, &mut LocalEnv, &[String]) -> CommandResult;
+fn complete<F: FnOnce(&mut LocalEnv) + 'static>(f: F) -> CommandComplete {
+    (box f) as CommandComplete
+}
 
-fn cmd_fontsize(_io: IoRef, _env: GraphChain, _local: &mut LocalEnv, args: &[String])
+pub type CommandComplete = Box<FnBox(&mut LocalEnv)>;
+pub type CommandResult = Box<Future<Item=CommandComplete, Error=LoomError>>;
+pub type Command = fn(&Io, &GraphChain, Vec<InlinableString>) -> CommandResult;
+
+/*
+fn cmd_fontsize(_io: &Io, _env: GraphChain, args: Vec<String>)
  -> CommandResult
 {
     cmd_args!{args;
         size,
     };
-    let scale: f32 = try!(size.parse().into());
+    //let scale: f32 = try!(size.parse().into());
     
     //local.set_default_font(RustTypeEngine::default().scale(scale));
     println!("fontsize set to {}", size);
-    Ok(())
+    box ok(complete(|_| ()))
 }
-
-fn cmd_group(_io: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
+*/
+fn cmd_group(_io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
  -> CommandResult
 {
     cmd_args!{args;
@@ -105,64 +74,61 @@ fn cmd_group(_io: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
         closing,
     };
     
-    let n = env.link(local).get_target(&name).expect("name not found").clone();
-    local.add_group(opening, closing, n);
+    let n = env.get_target(&name).expect("name not found").clone();
     
-    Ok(())
+    box ok(complete(move |mut local| local.add_group(&opening, &closing, n)))
 }
 
-fn cmd_hyphens(_io: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
+fn cmd_hyphens(_io: &Io, env: &GraphChain, args: Vec<InlinableString>)
  -> CommandResult
 {
     use hyphenation::Hyphenator;
 
     if args.len() != 1 {
-        return Err(CommandError::Message("expected one argument"))
+        return box err(LoomError::MissingArg("filename"))
     }
     let ref filename = args[0];
-    match env.search_file(&filename) {
-        None => {
-            Err(CommandError::Message("file not found").into())
-        },
-        Some(ref path) => {
-            let h = Hyphenator::load(&path)?;
-            local.set_hyphenator(h);
-            Ok(())
-        }
-    }
+    box env.search_file(&filename)
+    .map_err(|e| e.into())
+    .and_then(|data| {
+        Hyphenator::load(data)
+        .map_err(|e| e.into())
+        .and_then(|h| 
+            Ok(complete(|local: &mut LocalEnv| local.set_hyphenator(h)))
+        )
+    })
 }
 
-fn cmd_load(io: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
+fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
  -> CommandResult
 {
     use blocks::Module;
     use std::str;
     
-    for arg in args.iter() {
-        let data: Vec<u8> = if arg.contains("://") {
-            match io.platform().fetch(arg) {
-                Ok(data) => data,
-                Err(e) => {
-                    println!("failed to fetch {}: {:?}", arg, e);
-                    continue;
-                }
+    let modules = args.drain(..)
+    .map(move |arg| {
+        // FIXME
+        let io = io.clone();
+        let env = env.clone();
+        let name = arg.rsplitn(2, '/').next().unwrap().to_owned();
+        io.fetch(&arg)
+        .and_then(move |data| {
+            let string = String::from_utf8(data).unwrap();
+            Ok(Module::parse(&io, env, string))
+        })
+        .flatten()
+        .map(|module| (module, name))
+    })
+    .collect::<Vec<_>>();
+    
+    box join_all(modules)
+    .and_then(|mut modules: Vec<(NodeP, String)>| {
+        Ok(complete(move |local: &mut LocalEnv| {
+            for (module, name) in modules.drain(..) {
+                local.add_target(name, module);
             }
-        } else {
-            let filename = &format!("{}.yarn", arg);
-            match env.search_file(&filename) {
-                Some(file) => file.read().unwrap(),
-                None => {
-                    println!("{} not found", filename);
-                    continue
-                }
-            }
-        };
-        
-        let s = String::from_utf8(data).expect("invalid file");
-        let m = Module::parse(io.clone(), env, &s);
-        local.add_target(arg, m);
-    }
-    Ok(())
+        }))
+    })
 }
 
 /// for each argument:
@@ -170,7 +136,8 @@ fn cmd_load(io: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
 ///  2. if not presend, checks the presens of the name.yarn in CWD
 ///  3. if not present, check presence of file in $LOOM_DATA
 ///  4. otherwise gives an error
-fn cmd_use(_: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
+/*
+fn cmd_use(_: &Io, env: GraphChain, local: &mut LocalEnv, args: &[String])
  -> CommandResult
 {
     for arg in args.iter() {
@@ -209,10 +176,10 @@ fn cmd_use(_: IoRef, env: GraphChain, local: &mut LocalEnv, args: &[String])
         }
     }
     println!("use {:?}", args);
-    Ok(())
-}
+    ok(()).boxed()
+}*/
 
-fn cmd_symbol(_io: IoRef, _env: GraphChain, local: &mut LocalEnv, args: &[String])
+fn cmd_symbol(_io: &Io, _env: &GraphChain, mut args: Vec<InlinableString>)
  -> CommandResult
 {
 
@@ -220,6 +187,6 @@ fn cmd_symbol(_io: IoRef, _env: GraphChain, local: &mut LocalEnv, args: &[String
         src,
         dst,
     };
-    local.add_symbol(src, dst);
-    Ok(())
+    
+    box ok(complete(move |local: &mut LocalEnv| local.add_symbol(&src, &dst)))
 }
