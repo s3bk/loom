@@ -1,15 +1,15 @@
 use layout::{Flex, FlexMeasure, ParagraphLayout, StreamVec, Surface};
-use image::{GrayImage, Luma};
+use image::{GrayImage, Luma, Pixel};
 use std::collections::HashMap;
 use std::error::Error;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::path::Path;
-use std::io;
 use rusttype;
 use std::fmt::{Debug, self};
 use output::{Output};
 use units::*;
+use io::{Io, AioError, File};
+use futures::Future;
 
 #[derive(Clone)]
 pub struct RustTypeFont {
@@ -153,18 +153,6 @@ impl Output for PngOutput {
         font.measure(word)
     }
     
-    
-    fn default_font(&mut self) -> RustTypeFont {
-        self.scale(&UnscaledRustTypeFont {
-            font: rusttype::FontCollection::from_bytes(
-                include_bytes!(
-                    "../../data/fonts/LiberationSerif-Regular.ttf"
-                ) as &'static [u8]
-            ).font_at(0).unwrap()
-        }, 18.)
-    }
-    
-    
     fn measure_space(font: &RustTypeFont, scale: f32) -> FlexMeasure {
         font.measure(" ").flex(2.0) * scale
     }
@@ -179,15 +167,10 @@ impl Output for PngOutput {
         }
     }
 
-    fn use_font(&mut self, file: &str) -> Result<UnscaledRustTypeFont, Box<Error>> {
-        use std::fs::File;
-        use std::io::Read;
-        
-        let mut f = try!(File::open(file));
-        let mut data = Vec::<u8>::new();
-        try!(f.read_to_end(&mut data));
-    
-        Ok(UnscaledRustTypeFont {
+    fn use_font(&self, io: &Io, file: &File)
+     -> Box<Future<Item=UnscaledRustTypeFont, Error=AioError>> {
+        box file.read()
+        .map(|data| UnscaledRustTypeFont {
             font: rusttype::FontCollection::from_bytes(data).font_at(0).unwrap()
         })
     }
@@ -201,8 +184,18 @@ pub struct PngSurface {
     image: GrayImage
 }
 impl PngSurface {
-    pub fn save(&self, p: &Path) -> io::Result<()> {
-        self.image.save(p)
+    pub fn encode(&self) -> Vec<u8> {
+        use image::png::PNGEncoder;
+        let mut data = Vec::new();
+        let ref i = self.image;
+        
+        PNGEncoder::new(&mut data)
+        .encode(i, i.width(), i.height(), Luma::<u8>::color_type());
+        
+        data
+    }
+    pub fn image(&self) -> &GrayImage {
+        &self.image
     }
 }
 impl Surface for PngSurface {
@@ -212,6 +205,5 @@ impl Surface for PngSurface {
     fn secondary(&self) -> Option<Length> {
         Some(self.image.height() as Length)
     }
-    
     //fn region(&self, rect: Rect) -> Surface<'a>;
 }

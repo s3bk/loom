@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::cell::{RefCell, RefMut};
 use std::rc::Rc;
 use std;
+use std::fmt;
 use woot::{IncrementalStamper};
 use document::{Node, NodeP};
 use layout::Writer;
@@ -11,7 +12,7 @@ use environment::{LocalEnv, GraphChain, LayoutChain, prepare_graph};
 use futures::Future;
 use super::LoomError;
 
-pub use yaio::{self, AioError, File};
+pub use yaio::{self, AioError, File, Log};
 pub use rmp_serialize::{Encoder, Decoder};
 
 pub type Result<T> = std::result::Result<T, AioError>;
@@ -35,39 +36,48 @@ impl IoCreate {
 
 #[derive(Clone)]
 pub struct Io {
-    io:     Rc<RefCell<IoMachine>>
+        io:     Rc<RefCell<IoMachine>>,
+    pub log:    Log
 }
 impl Io {
     fn borrow_mut(&self) -> RefMut<IoMachine> {
         self.io.borrow_mut()
     }
+    
+    pub fn yarn(&self, yarn: String) -> Box<Future<Item=Yarn, Error=LoomError>> {
+        use blocks::Module;
         
+        let env = prepare_graph(self);
+            
+        let io = self.clone();
+        // the lifetime of io.clone() ensures no borrow exists when the function
+        // returns from this call
+        box Module::parse(io.clone(), env.clone(), yarn)
+        .and_then(move |root: NodeP| {
+            let io = io;
+            println!("parsing complete");
+            // thus this call can not fail
+            io.borrow_mut().insert_node(root.clone());
+            Ok(Yarn {
+                root:   root,
+                env:    env.take()
+            })
+        })
+    }
+    
     pub fn load_yarn(&self, yarn: File) -> Box<Future<Item=Yarn, Error=LoomError>>
     {
-        use blocks::Module;
 
         let io = self.clone();
+        
+        trace!(self.log, "load_yarn");
         
         box yarn.read()
         .map_err(|e| e.into())
         .and_then(move |data| {
             let io = io;
             let string = String::from_utf8(data).expect("invalid utf8");
-            let env = prepare_graph(&io);
-            
-            // the lifetime of io.clone() ensures no borrow exists when the function
-            // returns from this call
-            Module::parse(&io, env.clone(), string)
-            .and_then(move |root: NodeP| {
-                let io = io;
-                println!("parsing complete");
-                // thus this call can not fail
-                io.borrow_mut().insert_node(root.clone());
-                Ok(Yarn {
-                    root:   root,
-                    env:    env.take()
-                })
-            })
+            io.yarn(string)
         })
     }
     
@@ -94,6 +104,11 @@ pub struct Yarn {
 impl Yarn {
     pub fn layout<W: Writer>(&self, w: &mut W) {
         self.root.layout(LayoutChain::root(&self.env), w)
+    }
+}
+impl fmt::Debug for Yarn {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Yarn")
     }
 }
 
@@ -163,7 +178,8 @@ impl IoMachine {
     
     pub fn to_ref(self) -> Io {
         Io {
-            io: Rc::new(RefCell::new(self))
+            io:     Rc::new(RefCell::new(self)),
+            log:    Log::root().branch()
         }
     }
 }

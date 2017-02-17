@@ -117,8 +117,10 @@ mod glue;
 mod paragraph;
 mod generic_writer;
 mod flex;
+mod style;
 
 pub use self::glue::Glue;
 pub use self::paragraph::ParagraphLayout;
 pub use self::generic_writer::{GenericWriter};
 pub use self::flex::FlexMeasure;
+pub use self::style::Style;

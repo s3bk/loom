@@ -61,14 +61,14 @@ impl<'a, O: Output> ParagraphLayout<'a, O>  {
                 None => {}
             }
         }
-        
+        /*
         for (n, node) in nodes.iter().take(limit).enumerate() {
             println!("{:4}  {:?}", n, node);
             println!("      {:?}", self.items[n]);
         }
         println!("{:4}  {:?}", limit, nodes[limit]);
         println!("last: {}", last);
-        
+        */
         if last == 0 {
             return;
         }
@@ -87,7 +87,7 @@ impl<'a, O: Output> ParagraphLayout<'a, O>  {
             }
         }
         
-        let mut y = 0.;
+        let mut y = 20.;
         for &(b, end) in steps.iter().rev() {
             let mut measure = FlexMeasure::zero();
             let mut pos = b.prev;

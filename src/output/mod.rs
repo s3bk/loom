@@ -5,6 +5,8 @@ use layout::{FlexMeasure, Surface};
 use std::fmt::Debug;
 use num::Zero;
 use units::*;
+use io::{Io, AioError, File};
+use futures::Future;
 
 pub trait Output {
     // 
@@ -15,11 +17,11 @@ pub trait Output {
     type Surface: Surface;
     
     fn measure(&Self::Font, &str) -> Self::Word;
-    fn default_font(&mut self) -> Self::Font;
     
     /// It is highly recommended to implement caching.
     /// Vector based and above
-    fn use_font(&mut self, file: &str) -> Result<Self::UnscaledFont, Box<Error>>;
+    fn use_font(&self, io: &Io, file: &File)
+     -> Box<Future<Item=Self::UnscaledFont, Error=AioError>>;
     
     fn scale(&self, &Self::UnscaledFont, size: Length) -> Self::Font;
     fn measure_word(&Self::Word, line_width: Length) -> FlexMeasure;

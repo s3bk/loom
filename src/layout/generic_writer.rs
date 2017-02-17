@@ -140,14 +140,12 @@ impl<O: Output> Writer for GenericWriter<O> {
 
     #[inline(always)]
     fn word(&mut self, word: Atom) {
-        println!("Word: '{}'", word);
         self.push(word.left, word.right, move |s, f|
             s.push(Entry::Word(O::measure(f, word.text)))
         );
     }
         
     fn punctuation(&mut self, p: Atom) {
-        println!("Punc: '{}'", p);
         self.push(p.left, p.right, move |s, f|
             s.push(Entry::Punctuation(O::measure(f, p.text)))
         );
@@ -159,7 +157,6 @@ impl<O: Output> Writer for GenericWriter<O> {
     
     #[inline(always)]
     fn promote(&mut self, glue: Glue) {
-        println!("Prom: {}", glue);
         self.state |= glue;
     }
     

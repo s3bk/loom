@@ -101,7 +101,8 @@ impl<N: ?Sized> Clone for Ptr<N> where N: Node {
 impl Node for Placeholder {
     fn layout(&self, env: LayoutChain, w: &mut Writer) {
         let n = {
-            let fields = env.fields().unwrap();
+            let fields = env.fields()
+            .expect("Placeholder::layout: no fields found!");
             let n: Option<NodeP> = match self {
                 &Placeholder::Body => fields.body.clone().map(|n| n.into()),
                 &Placeholder::Argument(i) => fields.args.clone()

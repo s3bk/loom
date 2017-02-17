@@ -15,7 +15,7 @@ pub fn register(env: &mut LocalEnv) {
     env.add_command("group",        cmd_group);
     env.add_command("hyphens",      cmd_hyphens);
     env.add_command("load",         cmd_load);
- // env.add_command("use",          cmd_use);
+    env.add_command("use",          cmd_use);
     env.add_command("symbol",       cmd_symbol);
 }
 
@@ -37,18 +37,18 @@ macro_rules! cmd_args {
         $(
         let $out = match iter.next() {
             Some(v) => v,
-            None => return box err(LoomError::MissingArg(stringify!(out)))
+            None => return Err(LoomError::MissingArg(stringify!(out)))
         };
         )+
     };
 }
 
-fn complete<F: FnOnce(&mut LocalEnv) + 'static>(f: F) -> CommandComplete {
+fn complete<F: FnOnce(&GraphChain, &mut LocalEnv) + 'static>(f: F) -> CommandComplete {
     (box f) as CommandComplete
 }
 
-pub type CommandComplete = Box<FnBox(&mut LocalEnv)>;
-pub type CommandResult = Box<Future<Item=CommandComplete, Error=LoomError>>;
+pub type CommandComplete = Box<FnBox(&GraphChain, &mut LocalEnv)>;
+pub type CommandResult = Result<Box<Future<Item=CommandComplete, Error=LoomError>>, LoomError>;
 pub type Command = fn(&Io, &GraphChain, Vec<InlinableString>) -> CommandResult;
 
 /*
@@ -65,7 +65,7 @@ fn cmd_fontsize(_io: &Io, _env: GraphChain, args: Vec<String>)
     box ok(complete(|_| ()))
 }
 */
-fn cmd_group(_io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
+fn cmd_group(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
  -> CommandResult
 {
     cmd_args!{args;
@@ -73,10 +73,17 @@ fn cmd_group(_io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
         name,
         closing,
     };
+    let io = io.clone();
     
-    let n = env.get_target(&name).expect("name not found").clone();
-    
-    box ok(complete(move |mut local| local.add_group(&opening, &closing, n)))
+    Ok(box ok(complete(move |env: &GraphChain, local| {
+        let t = local.get_target(&name).or_else(|| env.get_target(&name)).cloned();
+        if let Some(n) = t {
+            local.add_group(opening, closing, n);
+        } else {
+            error!(io.log, "group '{}' not found", name);
+            //Err(LoomError::MissingItem(name.to_string()))
+        }
+    })))
 }
 
 fn cmd_hyphens(_io: &Io, env: &GraphChain, args: Vec<InlinableString>)
@@ -85,18 +92,19 @@ fn cmd_hyphens(_io: &Io, env: &GraphChain, args: Vec<InlinableString>)
     use hyphenation::Hyphenator;
 
     if args.len() != 1 {
-        return box err(LoomError::MissingArg("filename"))
+        return Err(LoomError::MissingArg("filename"))
     }
     let ref filename = args[0];
-    box env.search_file(&filename)
+    let f = env.search_file(&filename)
     .map_err(|e| e.into())
     .and_then(|data| {
         Hyphenator::load(data)
         .map_err(|e| e.into())
         .and_then(|h| 
-            Ok(complete(|local: &mut LocalEnv| local.set_hyphenator(h)))
+            Ok(complete(|env: &GraphChain, local: &mut LocalEnv| local.set_hyphenator(h)))
         )
-    })
+    });
+    Ok(box f)
 }
 
 fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
@@ -110,25 +118,28 @@ fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
         // FIXME
         let io = io.clone();
         let env = env.clone();
-        let name = arg.rsplitn(2, '/').next().unwrap().to_owned();
-        io.fetch(&arg)
+        let name = arg.to_string();
+        debug!(io.log, "load '{}'", name);
+        
+        io.base_dir().read_entry(&format!("{}.yarn", name))
         .and_then(move |data| {
             let string = String::from_utf8(data).unwrap();
-            Ok(Module::parse(&io, env, string))
+            Ok(Module::parse(io, env, string))
         })
         .flatten()
         .map(|module| (module, name))
     })
     .collect::<Vec<_>>();
     
-    box join_all(modules)
+    let f = join_all(modules)
     .and_then(|mut modules: Vec<(NodeP, String)>| {
-        Ok(complete(move |local: &mut LocalEnv| {
+        Ok(complete(move |env: &GraphChain, local: &mut LocalEnv| {
             for (module, name) in modules.drain(..) {
                 local.add_target(name, module);
             }
         }))
-    })
+    });
+    Ok(box f)
 }
 
 /// for each argument:
@@ -136,48 +147,64 @@ fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
 ///  2. if not presend, checks the presens of the name.yarn in CWD
 ///  3. if not present, check presence of file in $LOOM_DATA
 ///  4. otherwise gives an error
-/*
-fn cmd_use(_: &Io, env: GraphChain, local: &mut LocalEnv, args: &[String])
+
+fn cmd_use(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
  -> CommandResult
 {
-    for arg in args.iter() {
-        if let Some(idx) = arg.rfind('/') {
-            let parent = &arg[.. idx];
-            let child = &arg[idx+1 ..];
-            
-            let source = match env.link(local).get_target(parent) {
-                Some(s) => s.clone(),
-                None => { 
-                    println!("use: source not found");
-                    continue;
-                }
-            };
-            
-            let source_env = match source.env() {
-                Some(e) => e,
+    let io = io.clone();
+    let f = move |env: &GraphChain, local: &mut LocalEnv| {
+        for arg in args.iter() {
+            let mut parts = arg.split('/').peekable();
+            let name = parts.next().unwrap();
+            let mut current = match local.get_target(name).or_else(|| env.get_target(name)) {
+                Some(n) => n.clone(),
                 None => {
-                    println!("use: source has no namespace");
+                    warn!(io.log, "use: name '{}' not found", name);
                     continue;
                 }
             };
             
-            if child == "*" {
-                for (name, node) in source_env.targets() {
-                    local.add_target(name, node.clone());
+            while let Some(name) = parts.next() {
+                if parts.peek().is_some() {
+                    // not the end yet
+                    let next = {
+                        let env = match current.env() {
+                            Some(env) => env,
+                            None => {
+                                warn!(io.log, "use: '{}' has no environment", name);
+                                break;
+                            }
+                        };
+                        
+                        if let Some(c) = env.get_target(name) {
+                            c.clone()
+                        } else {
+                            warn!(io.log, "use: name '{}' not found", name);
+                            break;
+                        }
+                    };
+                    current = next;
+                    continue;
                 }
-            } else {
-                local.add_target(
-                    child,
-                    source_env.get_target(child).expect("not found").clone()
-                );
+                // end
+                if name == "*" {
+                    // import all
+                    if let Some(env) = current.env() {
+                        for (t, node) in env.targets() {
+                            local.add_target(t.clone(), node.clone());
+                        }
+                    } else {
+                        warn!(io.log, "use: '{}' has no environment", arg);
+                    }
+                } else {
+                    local.add_target(name.to_string(), current.clone());
+                }
             }
-        } else {
-            println!("use: no name given");
         }
-    }
-    println!("use {:?}", args);
-    ok(()).boxed()
-}*/
+    };
+    Ok(box ok(complete(f)))
+}
+
 
 fn cmd_symbol(_io: &Io, _env: &GraphChain, mut args: Vec<InlinableString>)
  -> CommandResult
@@ -188,5 +215,7 @@ fn cmd_symbol(_io: &Io, _env: &GraphChain, mut args: Vec<InlinableString>)
         dst,
     };
     
-    box ok(complete(move |local: &mut LocalEnv| local.add_symbol(&src, &dst)))
+    Ok(box ok(complete(move |env: &GraphChain, local: &mut LocalEnv|
+        local.add_symbol(&src, &dst)
+    )))
 }

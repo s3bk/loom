@@ -5,9 +5,6 @@ use unicode_brackets::UnicodeBrackets;
 use inlinable_string::InlinableString;
 use itertools::Itertools;
 
-#[cfg(debug_assertions)]
-use slug;
-
 macro_rules! alt_apply {
     ($i:expr, $arg:expr, $t:ident $(| $rest:tt)*) =>
     ( alt!($i, apply!($t, $arg) $(| apply!($rest, $arg) )* ) )

@@ -9,6 +9,7 @@
 //#[macro_use] extern crate derivative;
 #[macro_use] extern crate nom;
 #[macro_use] extern crate itertools;
+#[macro_use] extern crate yaio;
 extern crate unicode_categories;
 extern crate unicode_brackets;
 
@@ -25,8 +26,6 @@ extern crate futures;
 extern crate inlinable_string;
 extern crate ordermap;
 extern crate num;
-extern crate yaio;
-extern crate owning_ref;
 
 #[cfg(feature = "output_png")]
 extern crate image;
@@ -51,13 +50,16 @@ pub mod parser;
 pub mod io;
 pub mod commands;
 pub mod output;
-pub mod slug;
+//pub mod slug;
 pub mod units;
 
+#[derive(Debug)]
 pub enum LoomError {
     Io(yaio::AioError),
     MissingArg(&'static str),
-    Fst(fst::Error)
+    Fst(fst::Error),
+    MissingItem(String),
+    Parser
 }
 impl From<yaio::AioError> for LoomError {
     fn from(e: yaio::AioError) -> LoomError {

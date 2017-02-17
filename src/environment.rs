@@ -63,8 +63,8 @@ impl LocalEnv {
         println!("add_target({}, …)", name);
         self.targets.insert(name, target);
     }
-    pub fn add_group(&mut self, opening: &str, closing: &str, node: NodeP) {
-        self.groups.insert((opening.into(), closing.into()), node);
+    pub fn add_group(&mut self, opening: InlinableString, closing: InlinableString, node: NodeP) {
+        self.groups.insert((opening, closing), node);
     }
     pub fn childs(&self, out: &mut Vec<NodeP>) {
         for n in self.targets.values() {
@@ -82,6 +82,9 @@ impl LocalEnv {
     }
     pub fn add_symbol(&mut self, src: &str, dst: &str) {
         self.symbols.insert(src.into(), dst.into());
+    }
+    pub fn search_file(&self, filename: &str) -> yaio::ReadFuture {
+        yaio::search_file(filename, self.paths.clone().into_iter())
     }
 }
 
@@ -133,7 +136,13 @@ impl GraphChain {
     }
     
     pub fn search_file(&self, filename: &str) -> yaio::ReadFuture {
-        yaio::search_file(filename, self.inner.local.paths.iter().cloned())
+        let mut paths = Vec::new();
+        let mut p = Some(self);
+        while let Some(link) = p {
+            paths.extend_from_slice(&link.inner.local.paths);
+            p = link.inner.parent.as_ref();
+        }
+        yaio::search_file(filename, paths.into_iter())
     }
     
     pub fn get_target(&self, name: &str) -> Option<&NodeP> {
@@ -209,11 +218,11 @@ impl<'a> LayoutChain<'a> {
     }
     
     pub fn fields(&self) -> Option<&Fields> {
-        self.find(|c| c.fields())
+        self.find(|c| c.fields)
     }
     
     pub fn hyphenator(&self) -> Option<&Hyphenator> {
-        self.find(|c| c.hyphenator())
+        self.find(|c| c.hyphenator.as_ref())
     }
     pub fn hyphenate(&self, w: &mut Writer, word: Atom) {
         if let Some(hyphenator) = self.hyphenator() {

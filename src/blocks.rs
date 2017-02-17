@@ -16,12 +16,13 @@ fn wrap<N: Node + 'static>(node: N) -> NodeFuture {
     box ok(Ptr::new(node).into())
 }
 
-fn process_body(io: Io, env: GraphChain, mut childs: Vec<parser::Body>)
- -> Box<Future<Item=(GraphChain, NodeListP), Error=LoomError>>
+fn process_body(io: Io, env: GraphChain, childs: Vec<parser::Body>)
+ -> Box< Future<Item=(GraphChain, NodeListP), Error=LoomError> >
 {
     use parser::Body;
     
-    let nodes = childs.drain(..)
+    let io2 = io.clone();
+    let nodes = childs.into_iter()
     .map(|node| {
         match node {
             Body::Block(b) => box Pattern::from_block(&io, &env, b),
@@ -31,11 +32,10 @@ fn process_body(io: Io, env: GraphChain, mut childs: Vec<parser::Body>)
         }
     }).collect::<Vec<_>>();
     
-    let io2 = io.clone();
     box join_all(nodes)
     .and_then(move |mut nodes: Vec<NodeP>| {
         let io = io2;
-        Ok( (env, Ptr::new(NodeList::from(&io, nodes.drain(..)))) )
+        Ok( (env, Ptr::new(NodeList::from(&io, nodes.into_iter()))) )
     })
 }
 
@@ -104,6 +104,35 @@ impl Node for Symbol {
     }
 }
 
+enum Token {
+    HFill,
+    Other(InlinableString)
+}
+impl Token {
+    fn new(s: InlinableString) -> Token {
+        match &*s {
+            "hfill" => Token::HFill,
+            _ => Token::Other(s)
+        }
+    }
+}
+impl Node for Token {
+    fn layout(&self, _env: LayoutChain, w: &mut Writer) {
+        match *self {
+            Token::HFill => {
+                w.promote(Glue::hfill());
+            },
+            Token::Other(ref s) => {
+                w.word(Atom {
+                    text:   &s,
+                    left:   Glue::None,
+                    right:  Glue::space()
+                });
+            }
+        }
+    }
+}
+
 fn item_node(io: &Io, env: &GraphChain, i: parser::Item) -> NodeP {
     use parser::Item;
     
@@ -112,7 +141,7 @@ fn item_node(io: &Io, env: &GraphChain, i: parser::Item) -> NodeP {
         Item::Symbol(ref s) => Ptr::new(Symbol::new(env, s)).into(),
         Item::Punctuation(ref s) => Ptr::new(Punctuation::new(s)).into(),
         Item::Placeholder(p) => Ptr::new(p).into(),
-        Item::Token(ref s) => Ptr::new(Word::new(s)).into(),
+        Item::Token(s) => Ptr::new(Token::new(s)).into(),
         Item::Group(g) => Group::from(io, env, g).into()
     }
 }
@@ -123,9 +152,9 @@ pub struct Group {
 }
 
 impl Group {
-    pub fn from(io: &Io, env: &GraphChain, mut g: parser::Group) -> Ptr<Group> {
+    pub fn from(io: &Io, env: &GraphChain, g: parser::Group) -> Ptr<Group> {
         let content = Ptr::new(NodeList::from(io,
-            g.content.drain(..).map(|n| item_node(io, env, n))
+            g.content.into_iter().map(|n| item_node(io, env, n))
         ));
         
         let mut g = Ptr::new(Group {
@@ -177,10 +206,10 @@ pub struct Leaf {
     content: NodeList<NodeP>
 }
 impl Leaf {
-    pub fn from(io: &Io, env: &GraphChain, mut items: Vec<parser::Item>) -> Leaf {
+    pub fn from(io: &Io, env: &GraphChain, items: Vec<parser::Item>) -> Leaf {
         Leaf {
             content: NodeList::from(io,
-                items.drain(..).map(|n| item_node(io, env, n))
+                items.into_iter().map(|n| item_node(io, env, n))
             )
         }
     }
@@ -207,11 +236,11 @@ struct List {
     items: NodeList<Ptr<Leaf>>
 }
 impl List {
-    pub fn from(io: &Io, env: &GraphChain, mut items: Vec<Vec<parser::Item>>) -> List {
+    pub fn from(io: &Io, env: &GraphChain, items: Vec<Vec<parser::Item>>) -> List {
         List {
             items: NodeList::from(
                 io,
-                items.drain(..).map(|i| Ptr::new(Leaf::from(io, env, i))
+                items.into_iter().map(|i| Ptr::new(Leaf::from(io, env, i))
             ))
         }
     }
@@ -233,17 +262,23 @@ impl Node for List {
     }
 }
 
-fn init_env(io: &Io, env: GraphChain,
-    mut commands: Vec<parser::Command>, mut parameters: Vec<parser::Parameter>)
+fn init_env(io: Io, env: GraphChain,
+    commands: Vec<parser::Command>, parameters: Vec<parser::Parameter>)
  -> Box<Future<Item=GraphChain, Error=LoomError>>
 {
-    let io2 = io.clone();
+    let log = io.log;
     
-    let commands: Vec<_> = commands.drain(..)
+    let commands: Vec<_> = commands.into_iter()
         .filter_map(|cmd| {
             match env.get_command(&cmd.name) {
-                Some(f) => Some(f(io, &env, cmd.args)),
-                None => None
+                Some(f) => match f(&io, &env, cmd.args) {
+                    Ok(f) => Some(f),
+                    Err(e) => None,
+                },
+                None => {
+                    trace!(log, "not found");
+                    None
+                }
             }
         })
         .collect();
@@ -252,25 +287,23 @@ fn init_env(io: &Io, env: GraphChain,
     let f = join_all(
         commands
     )
-    .and_then(move |mut commands: Vec<CommandComplete>| {
+    .and_then(move |commands: Vec<CommandComplete>| {
         use std::boxed::FnBox;
         
         let mut local_env = LocalEnv::new();
-        for c in commands.drain(..) {
+        for c in commands.into_iter() {
             // execute command
-            FnBox::call_box(c, (&mut local_env,));
+            FnBox::call_box(c, (&env, &mut local_env,));
             //c(&mut local_env);
         }
         
-        let io = io2;
-        
-        let definitions = parameters.drain(..)
-        .map(|p| Definition::from_param(&io, env.clone(), p))
+        let definitions = parameters.into_iter()
+        .map(|p| Definition::from_param(io.clone(), env.clone(), p))
         .collect::<Vec<_>>();
         
         join_all(definitions)
-        .and_then(move |mut items: Vec<Definition>| {
-            for d in items.drain(..) {
+        .and_then(move |items: Vec<Definition>| {
+            for d in items.into_iter() {
                 local_env.add_target(d.name.clone(), Ptr::new(d).into());
             }
             Ok(env.link(local_env))
@@ -285,16 +318,23 @@ pub struct Module {
     body:       NodeListP
 }
 impl Module {
-    pub fn parse(io: &Io, env: GraphChain, input: String)
+    pub fn parse(io: Io, env: GraphChain, input: String)
      -> Box< Future<Item=NodeP, Error=LoomError> >
     {
-        let (_, body) = parser::block_body(&input, 0).unwrap();
-        let io2 = io.clone();
+        use nom::IResult;
+        use futures::future::err;
+        
+        let body = match parser::block_body(&input, 0) {
+            IResult::Done(_, out) => out,
+            _ => {
+                return box err(LoomError::Parser);
+            }
+        };
         
         let childs = body.childs;
-        box init_env(io, env, body.commands, body.parameters)
+        box init_env(io.clone(), env, body.commands, body.parameters)
         .and_then(move |env| {
-            process_body(io2, env, childs)
+            process_body(io, env, childs)
             .map(|(env, childs)| -> NodeP {
                 Ptr::new(Module {
                     env:    env.take(),
@@ -348,22 +388,20 @@ impl Node for Definition {
 }
 
 impl Definition {
-    fn from_param(io: &Io, env: GraphChain, p: parser::Parameter)
+    fn from_param(io: Io, env: GraphChain, p: parser::Parameter)
      -> Box<Future<Item=Definition, Error=LoomError>>
     {
-        let io2 = io.clone();
         let args = p.args;
         let name = p.name.to_string();
         let body = p.value;
         let childs = body.childs;
         
-        box init_env(io, env, body.commands, body.parameters)
+        box init_env(io.clone(), env, body.commands, body.parameters)
         .and_then(move |env| {
-            let io = io2;
             let mut args = args;
             let arglist = Ptr::new(
                 NodeList::from(&io,
-                    args.drain(..)
+                    args.into_iter()
                     .map(|n| item_node(&io, &env, n))
                 )
             );
@@ -401,11 +439,11 @@ impl Pattern {
         let name = block.name.to_string();
         let childs = body.childs;
         
-        box init_env(io, env.clone(), body.commands, body.parameters)
+        box init_env(io.clone(), env.clone(), body.commands, body.parameters)
         .and_then(move |env| {
             let args = Ptr::new(
                 NodeList::from(&io2,
-                    argument.drain(..).map(|n| item_node(&io2, &env, n))
+                    argument.into_iter().map(|n| item_node(&io2, &env, n))
                 )
             );
             
@@ -444,5 +482,8 @@ impl Node for Pattern {
     }
     fn env(&self) -> Option<&LocalEnv> {
         Some(&self.env)
+    }
+    fn fields(&self) -> Option<&Fields> {
+        Some(&self.fields)
     }
 }
