@@ -1,6 +1,7 @@
 use layout::{Entry, StreamVec, FlexMeasure, Surface};
 use output::{Output};
 use num::Zero;
+//use layout::style::{Style};
 
 #[derive(Copy, Clone, Debug, Default)]
 struct LineBreak {
@@ -10,7 +11,7 @@ struct LineBreak {
     score:  f32
 }
 pub struct ParagraphLayout<'a, O: Output + 'a> {
-    items:      &'a StreamVec<O::Word>,
+    items:      &'a StreamVec<O>,
     width:      f32,
     surface:    &'a mut O::Surface
 }
@@ -25,7 +26,7 @@ struct LineContext {
 }
 
 impl<'a, O: Output> ParagraphLayout<'a, O>  {
-    pub fn new(items: &'a StreamVec<O::Word>, surface: &'a mut O::Surface, )
+    pub fn new(items: &'a StreamVec<O>, surface: &'a mut O::Surface, )
      -> ParagraphLayout<'a, O>
     {
         ParagraphLayout {

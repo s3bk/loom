@@ -30,7 +30,8 @@
     :section Metafile
         The relevant Metafile is loaded .
         
-        Attributes for the uses nodes are resolved
+        Attributes for the used nodes are resolved
+        by looking up the name of the block (at the definition)
     
     :section Layout Graph
         The block handlers are executed and combine the results from their 

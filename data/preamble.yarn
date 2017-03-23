@@ -13,6 +13,7 @@
 
 /ref $args
 
+!symbol "--" "—"
 !symbol "=>" -> "→"
 !symbol "=>" "⇒"
 !symbol "<-" "←"

@@ -1,26 +1,28 @@
 use layout::*;
 use output::Output;
 use std::iter::Extend;
+use layout::style::{Stylist};
 
 struct GenericBranchGen<'a, O: Output + 'a> {
-    parent: &'a GenericWriter<O>,
-    branches: Vec<(StreamVec<O::Word>, Glue)>
+    parent: &'a GenericWriter<'a, O>,
+    branches: Vec<(StreamVec<O>, Glue)>
 }
-impl<'a, O: Output> BranchGenerator<'a> for GenericBranchGen<'a, O> {
+impl<'a, O: Output + 'static> BranchGenerator<'a> for GenericBranchGen<'a, O> {
     fn add(&mut self, f: &mut FnMut(&mut Writer)) {
         let mut w = self.parent.dup();
         f(&mut w);
         self.branches.push((w.stream, w.state));
     }
 }
-pub struct GenericWriter<O: Output> {
+pub struct GenericWriter<'a, O: Output + 'a> {
     state:      Glue,
-    stream:     StreamVec<O::Word>,
-    font:       O::Font
+    stream:     StreamVec<O>,
+    styler:     &'a Stylist<O>,
+    style:      &'a Style<O>
 }
 
 // careful with the arguments.. they all have the same type!
-fn merge<W>(out: &mut StreamVec<W>, mut a: StreamVec<W>, mut b: StreamVec<W>) {
+fn merge<O: Output>(out: &mut StreamVec<O>, mut a: StreamVec<O>, mut b: StreamVec<O>) {
     if a.len() == 0 {
         out.extend(b);
     } else if b.len() == 0 {
@@ -49,30 +51,30 @@ fn merge<W>(out: &mut StreamVec<W>, mut a: StreamVec<W>, mut b: StreamVec<W>) {
         }
     }
 }
-impl<O: Output> GenericWriter<O> {
-    pub fn new(font: O::Font) -> GenericWriter<O> {
+impl<'a, O: Output + 'static> GenericWriter<'a, O> {
+    pub fn new(styler: &'a Stylist<O>) -> GenericWriter<'a, O> {
         GenericWriter {
             state:  Glue::None,
             stream: Vec::new(),
-            font:   font
+            style:  styler.default(),
+            styler: styler
         }
     }
     fn dup(&self) -> GenericWriter<O> {
         GenericWriter {
             stream: Vec::new(),
-            state:  self.state,
-            font:   self.font.clone(),
+            ..      *self
         }
     }
     
-    pub fn finish(&mut self) -> &StreamVec<O::Word> {
+    pub fn finish(&mut self) -> &StreamVec<O> {
         self.write_glue(Glue::Newline { fill: false });
         &self.stream
     }
     
-    fn push_branch<I>(&mut self, mut ways: I) where I: Iterator<Item=StreamVec<O::Word>> {
+    fn push_branch<I>(&mut self, mut ways: I) where I: Iterator<Item=StreamVec<O>> {
         if let Some(default) = ways.next() {
-            let mut others: Vec<StreamVec<O::Word>> = ways.collect();
+            let mut others: Vec<StreamVec<O>> = ways.collect();
             
             if others.len() == 0 {
                 self.stream.extend(default);
@@ -101,22 +103,22 @@ impl<O: Output> GenericWriter<O> {
             Glue::Newline { fill: f }
              => self.stream.push(Entry::Linebreak(f)),
             Glue::Space { breaking: b, scale: s }
-             => self.stream.push(Entry::Space(b, O::measure_space(&self.font, s))),
+             => self.stream.push(Entry::Space(b, O::measure_space(self.style.font(), s))),
             Glue::None => ()
         }
     }
     
     #[inline(always)]
     fn push<F>(&mut self, left: Glue, right: Glue, f: F) where
-    F: FnOnce(&mut StreamVec<O::Word>, &O::Font)
+    F: FnOnce(&mut StreamVec<O>, &O::Font)
     {
         self.write_glue(left);
-        f(&mut self.stream, &self.font);
+        f(&mut self.stream, self.style.font());
         
         self.state = right;
     }
 }   
-impl<O: Output> Writer for GenericWriter<O> {
+impl<'a, O: Output + 'static> Writer for GenericWriter<'a, O> {
     fn branch(&mut self, f: &mut FnMut(&mut BranchGenerator))
     {
         let mut branches = {
@@ -160,8 +162,11 @@ impl<O: Output> Writer for GenericWriter<O> {
         self.state |= glue;
     }
     
-    fn section(&mut self, f: &mut FnMut(&mut Writer), _name: &str) {
-        f(self)
+    fn with(&mut self, name: &NodeType, f: &mut FnMut(&mut Writer)) {
+        let old_style = self.style;
+        self.style = self.styler.get(name);
+        f(self);
+        self.style = old_style;
     }
 }
  

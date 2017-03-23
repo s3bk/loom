@@ -4,7 +4,6 @@ use std::ops;
 use std::fs;
 use std::collections::BTreeMap;
 use fst::{Map, MapBuilder, Error};
-use futures::Future;
 
 #[derive(Clone)]
 pub struct Hyphen {

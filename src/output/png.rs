@@ -1,15 +1,12 @@
-use layout::{Flex, FlexMeasure, ParagraphLayout, StreamVec, Surface};
+use layout::{Flex, FlexMeasure, Surface};
 use image::{GrayImage, Luma, Pixel};
 use std::collections::HashMap;
-use std::error::Error;
 use std::rc::Rc;
 use std::cell::RefCell;
 use rusttype;
 use std::fmt::{Debug, self};
-use output::{Output};
+use output::Output;
 use units::*;
-use io::{Io, AioError, File};
-use futures::Future;
 
 #[derive(Clone)]
 pub struct RustTypeFont {
@@ -53,6 +50,11 @@ impl RustTypeFont {
         };
         self.cache.borrow_mut().insert(word.to_owned(), w.clone());
         w
+    }
+}
+impl Debug for RustTypeFont {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "RustTypeFont")
     }
 }
 
@@ -167,12 +169,10 @@ impl Output for PngOutput {
         }
     }
 
-    fn use_font(&self, io: &Io, file: &File)
-     -> Box<Future<Item=UnscaledRustTypeFont, Error=AioError>> {
-        box file.read()
-        .map(|data| UnscaledRustTypeFont {
+    fn use_font_data(&self, data: Vec<u8>) -> UnscaledRustTypeFont {
+        UnscaledRustTypeFont {
             font: rusttype::FontCollection::from_bytes(data).font_at(0).unwrap()
-        })
+        }
     }
     
     fn draw_word(surface: &mut PngSurface, pos: Point, word: &RustTypeWord) {
@@ -190,7 +190,8 @@ impl PngSurface {
         let ref i = self.image;
         
         PNGEncoder::new(&mut data)
-        .encode(i, i.width(), i.height(), Luma::<u8>::color_type());
+        .encode(i, i.width(), i.height(), Luma::<u8>::color_type())
+        .expect("failed to encode PNG");
         
         data
     }

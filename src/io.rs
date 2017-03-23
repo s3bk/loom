@@ -1,21 +1,20 @@
-use rmp;
-use rmp_serialize;
+#![allow(dead_code)]
+
+//use rmp;
+//use rmp_serialize;
 use std::collections::HashMap;
 use std::cell::{RefCell, RefMut};
 use std::rc::Rc;
-use std;
 use std::fmt;
 use woot::{IncrementalStamper};
 use document::{Node, NodeP};
 use layout::Writer;
-use environment::{LocalEnv, GraphChain, LayoutChain, prepare_graph};
+use environment::{LocalEnv, LayoutChain, prepare_graph};
 use futures::Future;
+use wheel::prelude::*;
+use config::Config;
 use super::LoomError;
 
-pub use yaio::{self, AioError, File, Log};
-pub use rmp_serialize::{Encoder, Decoder};
-
-pub type Result<T> = std::result::Result<T, AioError>;
 pub type TypeId = u16;
 pub type DataSize = u32;
 pub type Stamp = (u32, u32);
@@ -25,7 +24,7 @@ pub struct IoCreate {
     io_ref: Io
 }
 impl IoCreate {
-    pub fn submit(mut self, data: &[u8]) {
+    pub fn submit(self, data: &[u8]) {
         // This is not Send -> submit can't be called twice at the same time
         self.io_ref.borrow_mut().add_data(self.stamp, data);
     }
@@ -46,7 +45,6 @@ impl Io {
     
     pub fn yarn(&self, yarn: String) -> Box<Future<Item=Yarn, Error=LoomError>> {
         use blocks::Module;
-        
         let env = prepare_graph(self);
             
         let io = self.clone();
@@ -55,7 +53,6 @@ impl Io {
         box Module::parse(io.clone(), env.clone(), yarn)
         .and_then(move |root: NodeP| {
             let io = io;
-            println!("parsing complete");
             // thus this call can not fail
             io.borrow_mut().insert_node(root.clone());
             Ok(Yarn {
@@ -73,7 +70,7 @@ impl Io {
         trace!(self.log, "load_yarn");
         
         box yarn.read()
-        .map_err(|e| e.into())
+        .map_err(|e| LoomError::FileRead(e))
         .and_then(move |data| {
             let io = io;
             let string = String::from_utf8(data).expect("invalid utf8");
@@ -88,12 +85,8 @@ impl Io {
         }
     }
     
-    pub fn fetch(&self, url: &str) -> yaio::ReadFuture {
-        yaio::read_url(url)
-    }
-    
-    pub fn base_dir(&self) -> yaio::Directory {
-        yaio::default_directory()
+    pub fn config<F, O>(&self, f: F) -> O where F: FnOnce(&Config) -> O {
+        f(&self.io.borrow().config)
     }
 }
 
@@ -112,8 +105,9 @@ impl fmt::Debug for Yarn {
     }
 }
 
+
 struct NodeType {
-    name:   String,
+    _name:   String,
     //decode: Box<Fn(&mut Decoder<Vec<u8>>) -> Result<Decoder::Error>>,
 }
 
@@ -133,6 +127,7 @@ pub struct IoMachine {
     nodes:      HashMap<Stamp, NodeP>,
     stamper:    IncrementalStamper<u32, u32>,
     typelist:   Vec<NodeType>,
+    config:     Config,
 }
 impl IoMachine {
     fn add_data(&self, _stamp: Stamp, _data: &[u8]) {
@@ -147,12 +142,13 @@ impl IoMachine {
     
     /// storage: Some(path) to store the document
     ///          None to throw it away.
-    pub fn new() -> IoMachine {
+    pub fn new(config: Config) -> IoMachine {
         
         IoMachine {
             nodes:      HashMap::new(),
             stamper:    IncrementalStamper::init_random(),
             typelist:   vec![],
+            config:     config
         }
     }
     

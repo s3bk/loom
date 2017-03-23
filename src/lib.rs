@@ -6,10 +6,13 @@
 #![feature(fnbox)]
 #![feature(link_args)]
 
-//#[macro_use] extern crate derivative;
 #[macro_use] extern crate nom;
-#[macro_use] extern crate itertools;
-#[macro_use] extern crate yaio;
+#[macro_use] extern crate wheel;
+#[macro_use] extern crate serde_derive;
+
+extern crate itertools;
+extern crate serde;
+extern crate serde_json;
 extern crate unicode_categories;
 extern crate unicode_brackets;
 
@@ -52,22 +55,16 @@ pub mod commands;
 pub mod output;
 //pub mod slug;
 pub mod units;
+pub mod config;
+
+use wheel::prelude::*;
 
 #[derive(Debug)]
 pub enum LoomError {
-    Io(yaio::AioError),
+    FileRead(<File as AsyncRead>::Error),
+    DirectoryGetFile(String, <Directory as AsyncDirectory>::Error),
     MissingArg(&'static str),
-    Fst(fst::Error),
+    Hyphenator(fst::Error),
     MissingItem(String),
     Parser
-}
-impl From<yaio::AioError> for LoomError {
-    fn from(e: yaio::AioError) -> LoomError {
-        LoomError::Io(e)
-    }
-}
-impl From<fst::Error> for LoomError {
-    fn from(e: fst::Error) -> LoomError {
-        LoomError::Fst(e)
-    }
 }

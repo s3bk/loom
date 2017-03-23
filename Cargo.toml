@@ -29,6 +29,9 @@ ordermap = { git="https://github.com/bluss/ordermap" }
 num = "*"
 futures = "*"
 owning_ref = "*"
+serde = "*"
+serde_derive = "*"
+serde_json = "*"
 
 
 [dependencies.fst]
@@ -63,8 +66,8 @@ git = "https://github.com/s3bk/woot.git"
 version = "*"
 optional = true
 
-[dependencies.yaio]
-path = "../YaIo"
+[dependencies.wheel]
+path = "../wheel"
 
 [[bin]]
 name = "profile_parser"

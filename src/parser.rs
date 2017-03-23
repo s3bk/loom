@@ -3,7 +3,6 @@ use std::iter::{Iterator};
 use unicode_categories::UnicodeCategories;
 use unicode_brackets::UnicodeBrackets;
 use inlinable_string::InlinableString;
-use itertools::Itertools;
 
 macro_rules! alt_apply {
     ($i:expr, $arg:expr, $t:ident $(| $rest:tt)*) =>

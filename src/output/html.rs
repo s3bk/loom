@@ -1,10 +1,5 @@
 use layout::*;
-use std::error::Error;
-use std::fmt::{Debug, self};
-use output::Output;
-use std::path::Path;
 use std::io::Write;
-use std::fs::File;
 use sxd_document::{Package, dom};
 
 pub struct HtmlOutput {
@@ -51,7 +46,8 @@ impl<'a> HtmlWriter<'a> {
     }
     pub fn finish<W: Write>(self, out: &mut W) {
         use sxd_document::writer::format_document;
-        format_document(&self.element.document(), out);
+        format_document(&self.element.document(), out)
+        .expect("failed to write XML");
     }
     
     fn add_glue(&mut self, glue: Glue) {
@@ -94,17 +90,27 @@ impl<'a> Writer for HtmlWriter<'a> {
         self.state |= glue;
     }
     
-    fn object(&mut self, item: Box<Object>) {}
-    
-    fn section(&mut self, f: &mut FnMut(&mut Writer), name: &str) {
+    fn with(&mut self, ty: &NodeType, f: &mut FnMut(&mut Writer)) {
         self.add(|d| {
-            let s = d.create_element("section");
-            s.set_attribute_value("name", name);
+            let s = match *ty {
+                NodeType::Section(ref name) => {
+                    let s = d.create_element("section");
+                    s.set_attribute_value("name", name);
+                    s
+                },
+                NodeType::Named(ref name) => {
+                    let s = d.create_element("div");
+                    s.set_attribute_value("name", name);
+                    s
+                },
+                _ => d.create_element("div")
+            };
             
             f(&mut HtmlWriter {
                 element:    s,
                 state:      Glue::None
             });
+            
             s
         })
     }

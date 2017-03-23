@@ -4,10 +4,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use layout::{Atom, Writer};
 use environment::{LocalEnv, GraphChain, Fields, LayoutChain};
-use io::{Stamp, Io, AioError};
+use io::{Stamp, Io};
 use woot::WString;
 use inlinable_string::InlinableString;
-use futures::{future, Future, BoxFuture};
 pub use parser::Placeholder;
 
 /// The Document is a Directed Acyclic Graph.
@@ -191,7 +190,7 @@ impl<T> NodeList<T> where T: Node + Clone {
         
         for (n, item) in iter.enumerate() {
             let job = io.create();
-            let op = ws.ins(n, item, job.stamp());
+            let _op = ws.ins(n, item, job.stamp());
             //job.submit(op);
             
             //emit();

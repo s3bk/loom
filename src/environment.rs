@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use document::{Node, NodeP, NodeListP};
 use io::{Io};
 use hyphenation::Hyphenator;
@@ -8,7 +8,7 @@ use commands::Command;
 use inlinable_string::InlinableString;
 use ordermap::OrderMap;
 use layout::{Atom, Glue, Writer};
-use yaio;
+use wheel::{Directory};
 
 /// The Environment can only be changed within the Block::parse call
 /// Is is therefore allowed to cache results whithin methods that do not involve
@@ -19,7 +19,7 @@ use yaio;
 
 /// used at graph creation and possibly layout
 pub struct LocalEnv {
-    paths:          Vec<yaio::Directory>,
+    paths:          Vec<Directory>,
     commands:       HashMap<String, Command>,
     targets:        HashMap<String, NodeP>,
     groups:         OrderMap<(InlinableString, InlinableString), NodeP>,
@@ -56,7 +56,7 @@ impl LocalEnv {
     pub fn add_command(&mut self, name: &str, cmd: Command) {
         self.commands.insert(name.to_owned(), cmd);
     }
-    fn add_path(&mut self, dir: yaio::Directory) {
+    pub fn add_path(&mut self, dir: Directory) {
         self.paths.push(dir);
     }
     pub fn add_target(&mut self, name: String, target: NodeP) {
@@ -82,9 +82,6 @@ impl LocalEnv {
     }
     pub fn add_symbol(&mut self, src: &str, dst: &str) {
         self.symbols.insert(src.into(), dst.into());
-    }
-    pub fn search_file(&self, filename: &str) -> yaio::ReadFuture {
-        yaio::search_file(filename, self.paths.clone().into_iter())
     }
 }
 
@@ -133,16 +130,6 @@ impl GraphChain {
         } else {
             None
         }
-    }
-    
-    pub fn search_file(&self, filename: &str) -> yaio::ReadFuture {
-        let mut paths = Vec::new();
-        let mut p = Some(self);
-        while let Some(link) = p {
-            paths.extend_from_slice(&link.inner.local.paths);
-            p = link.inner.parent.as_ref();
-        }
-        yaio::search_file(filename, paths.into_iter())
     }
     
     pub fn get_target(&self, name: &str) -> Option<&NodeP> {
@@ -260,13 +247,11 @@ impl<'a> LayoutChain<'a> {
     }
 }
 
-pub fn prepare_graph(io: &Io) -> GraphChain {
+pub fn prepare_graph(_io: &Io) -> GraphChain {
     use commands;
     
-    let data_path = io.base_dir();
     let mut e = LocalEnv::new();
     
-    e.add_path(data_path);
     commands::register(&mut e);
     
     GraphChain::root(e)

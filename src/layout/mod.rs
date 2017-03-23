@@ -1,5 +1,21 @@
 use std::fmt::{self, Debug};
+use std::rc::Rc;
 use units::*;
+use output::Output;
+
+// private mods
+mod glue;
+mod paragraph;
+mod generic_writer;
+mod flex;
+mod style;
+
+pub use self::glue::Glue;
+pub use self::paragraph::ParagraphLayout;
+pub use self::generic_writer::{GenericWriter};
+pub use self::flex::FlexMeasure;
+pub use self::style::{Style, Stylist};
+
 
 // to flex or not to flex?
 #[allow(unused_variables)]
@@ -20,13 +36,13 @@ pub trait Flex {
 
 
 #[derive(Debug)]
-pub enum Entry<W> {
+pub enum Entry<O: Output> {
     /// A single word (sequence of glyphs)
-    Word(W),
+    Word(O::Word),
     
     /// Punctuation ('"', ',', '.', '-', …)
     /// is positioned in the margin if at the beginning or end of the line
-    Punctuation(W),
+    Punctuation(O::Word),
     
     
     Object(Box<Object>),
@@ -54,9 +70,11 @@ pub enum Entry<W> {
     /// Each BranchEntry is followed by BranchExit. It specifies the number of
     /// items to skip.
     BranchExit(usize),
+    
+    Style(Rc<Style<O>>)
 }
 
-pub type StreamVec<Word> = Vec<Entry<Word>>;
+pub type StreamVec<O> = Vec<Entry<O>>;
 
 #[derive(Copy, Clone)]
 pub struct Atom<'a> {
@@ -90,6 +108,13 @@ pub trait Object: Debug {
     fn glue(&self) -> (Glue, Glue);
 }
 
+#[derive(PartialEq, Eq, Hash)]
+pub enum NodeType {
+    Section(String),
+    Named(String),
+    Default
+}
+
 pub trait Writer {
     // a single word, ignoring glue
     fn word(&mut self, word: Atom);
@@ -101,9 +126,9 @@ pub trait Writer {
     
     fn promote(&mut self, glue: Glue);
     
-    fn object(&mut self, item: Box<Object>);
+    fn object(&mut self, _item: Box<Object>) {}
     
-    fn section(&mut self, f: &mut FnMut(&mut Writer), name: &str);
+    fn with(&mut self, ty: &NodeType, f: &mut FnMut(&mut Writer));
 }
 
 pub trait Surface {
@@ -111,16 +136,3 @@ pub trait Surface {
     fn secondary(&self) -> Option<Length>;
 }
 
-
-// private mods
-mod glue;
-mod paragraph;
-mod generic_writer;
-mod flex;
-mod style;
-
-pub use self::glue::Glue;
-pub use self::paragraph::ParagraphLayout;
-pub use self::generic_writer::{GenericWriter};
-pub use self::flex::FlexMeasure;
-pub use self::style::Style;

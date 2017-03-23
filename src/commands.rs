@@ -1,14 +1,12 @@
 use environment::{LocalEnv, GraphChain};
-use io::{Io, AioError};
+use io::Io;
 use document::NodeP;
-use std::error::Error;
-use std::fmt::{self, Display};
 use std::boxed::FnBox;
-use futures::{Future, BoxFuture};
-use futures::future::{ok, err, join_all};
+use futures::Future;
+use futures::future::{ok, join_all};
 use inlinable_string::InlinableString;
+use wheel::prelude::*;
 use super::LoomError;
-use std;
 
 pub fn register(env: &mut LocalEnv) {
  // env.add_command("fontsize",     cmd_fontsize);
@@ -20,7 +18,7 @@ pub fn register(env: &mut LocalEnv) {
 }
 
 macro_rules! try_msg {
-    ($msg:expr ; $arg:$expr) => {
+    ($msg:expr ; $arg:expr) => {
         match $expr {
             Ok(r) => r,
             Err(e) => CommandError {
@@ -65,7 +63,7 @@ fn cmd_fontsize(_io: &Io, _env: GraphChain, args: Vec<String>)
     box ok(complete(|_| ()))
 }
 */
-fn cmd_group(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
+fn cmd_group(io: &Io, _env: &GraphChain, mut args: Vec<InlinableString>)
  -> CommandResult
 {
     cmd_args!{args;
@@ -86,7 +84,7 @@ fn cmd_group(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
     })))
 }
 
-fn cmd_hyphens(_io: &Io, env: &GraphChain, args: Vec<InlinableString>)
+fn cmd_hyphens(io: &Io, _env: &GraphChain, args: Vec<InlinableString>)
  -> CommandResult
 {
     use hyphenation::Hyphenator;
@@ -94,14 +92,14 @@ fn cmd_hyphens(_io: &Io, env: &GraphChain, args: Vec<InlinableString>)
     if args.len() != 1 {
         return Err(LoomError::MissingArg("filename"))
     }
-    let ref filename = args[0];
-    let f = env.search_file(&filename)
-    .map_err(|e| e.into())
+    let f = io.config(|conf| conf.data_dir.get_file(&args[0]))
+    .map_err(move |e| LoomError::DirectoryGetFile(args[0].to_string(), e))
+    .and_then(|file| file.read().map_err(|e| LoomError::FileRead(e)))
     .and_then(|data| {
         Hyphenator::load(data)
-        .map_err(|e| e.into())
+        .map_err(|e| LoomError::Hyphenator(e))
         .and_then(|h| 
-            Ok(complete(|env: &GraphChain, local: &mut LocalEnv| local.set_hyphenator(h)))
+            Ok(complete(|_env: &GraphChain, local: &mut LocalEnv| local.set_hyphenator(h)))
         )
     });
     Ok(box f)
@@ -121,19 +119,23 @@ fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
         let name = arg.to_string();
         debug!(io.log, "load '{}'", name);
         
-        io.base_dir().read_entry(&format!("{}.yarn", name))
+        let filename = format!("{}.yarn", name);
+        io.config(|conf| conf.yarn_dir
+            .get_file(&filename)
+            .map_err(|e| LoomError::DirectoryGetFile(filename, e))
+        )
+        .and_then(|file| file.read().map_err(|e| LoomError::FileRead(e)))
         .and_then(move |data| {
             let string = String::from_utf8(data).unwrap();
-            Ok(Module::parse(io, env, string))
+            Module::parse(io, env, string)
         })
-        .flatten()
         .map(|module| (module, name))
     })
     .collect::<Vec<_>>();
     
     let f = join_all(modules)
     .and_then(|mut modules: Vec<(NodeP, String)>| {
-        Ok(complete(move |env: &GraphChain, local: &mut LocalEnv| {
+        Ok(complete(move |_env: &GraphChain, local: &mut LocalEnv| {
             for (module, name) in modules.drain(..) {
                 local.add_target(name, module);
             }
@@ -148,7 +150,7 @@ fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
 ///  3. if not present, check presence of file in $LOOM_DATA
 ///  4. otherwise gives an error
 
-fn cmd_use(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
+fn cmd_use(io: &Io, _env: &GraphChain, args: Vec<InlinableString>)
  -> CommandResult
 {
     let io = io.clone();
@@ -215,7 +217,7 @@ fn cmd_symbol(_io: &Io, _env: &GraphChain, mut args: Vec<InlinableString>)
         dst,
     };
     
-    Ok(box ok(complete(move |env: &GraphChain, local: &mut LocalEnv|
+    Ok(box ok(complete(move |_env: &GraphChain, local: &mut LocalEnv|
         local.add_symbol(&src, &dst)
     )))
 }

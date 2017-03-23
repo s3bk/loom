@@ -1,5 +1,6 @@
 use nom::{Offset, AsBytes, Compare, CompareResult, InputLength, InputIter, Slice};
 use std::ops::{Range, RangeFrom, RangeTo, RangeFull};
+use inlinable_string::InlinableString;
 
 #[macro_export]
 macro_rules! slug {
@@ -124,6 +125,12 @@ impl<'a> Into<String> for Slug<'a> {
         self.slice.to_owned()
     }
 }
+impl<'a> Into<InlinableString> for Slug<'a> {
+    fn into(self) -> InlinableString {
+        self.slice.into()
+    }
+}
+
 impl<'a> std::fmt::Debug for Slug<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         self.slice.fmt(f)
@@ -238,7 +245,6 @@ impl<'a> InputIter for Slug<'a> {
       None
     }
 }
-
 pub fn wrap(data: &str) -> Slug {
     Slug {
         data:           data,

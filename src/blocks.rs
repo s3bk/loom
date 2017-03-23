@@ -3,8 +3,8 @@ use std::cell::RefCell;
 use environment::{GraphChain, LocalEnv, Fields, LayoutChain};
 use document::*;
 use parser;
-use io::{Io, AioError};
-use layout::{Atom, Glue, Writer};
+use io::Io;
+use layout::{Atom, Glue, Writer, NodeType};
 use commands::{CommandComplete};
 use inlinable_string::InlinableString;
 use futures::future::{Future, join_all, ok};
@@ -33,7 +33,7 @@ fn process_body(io: Io, env: GraphChain, childs: Vec<parser::Body>)
     }).collect::<Vec<_>>();
     
     box join_all(nodes)
-    .and_then(move |mut nodes: Vec<NodeP>| {
+    .and_then(move |nodes: Vec<NodeP>| {
         let io = io2;
         Ok( (env, Ptr::new(NodeList::from(&io, nodes.into_iter()))) )
     })
@@ -273,7 +273,7 @@ fn init_env(io: Io, env: GraphChain,
             match env.get_command(&cmd.name) {
                 Some(f) => match f(&io, &env, cmd.args) {
                     Ok(f) => Some(f),
-                    Err(e) => None,
+                    Err(_) => None,
                 },
                 None => {
                     trace!(log, "not found");
@@ -304,7 +304,7 @@ fn init_env(io: Io, env: GraphChain,
         join_all(definitions)
         .and_then(move |items: Vec<Definition>| {
             for d in items.into_iter() {
-                local_env.add_target(d.name.clone(), Ptr::new(d).into());
+                local_env.add_target(d.name().to_string(), Ptr::new(d).into());
             }
             Ok(env.link(local_env))
         })
@@ -358,7 +358,7 @@ impl Node for Module {
 }
 
 pub struct Definition {
-    name:       String,
+    ntype:      NodeType,
 
     args:       NodeListP,
     
@@ -376,8 +376,10 @@ impl Node for Definition {
         out.push(self.body.clone().into());
     }
     fn layout(&self, env: LayoutChain, w: &mut Writer) {
-        self.args.layout(env.link(self), w);
-        self.body.layout(env.link(self), w);
+        w.with(&self.ntype, &mut |w| {
+            self.args.layout(env.link(self), w);
+            self.body.layout(env.link(self), w);
+        })
     }
     fn add_ref(&self, source: &Rc<Node>) {
         self.references.borrow_mut().push(Rc::downgrade(source));
@@ -398,7 +400,6 @@ impl Definition {
         
         box init_env(io.clone(), env, body.commands, body.parameters)
         .and_then(move |env| {
-            let mut args = args;
             let arglist = Ptr::new(
                 NodeList::from(&io,
                     args.into_iter()
@@ -408,7 +409,7 @@ impl Definition {
             process_body(io, env, childs)
             .and_then(move |(env, childs)| {
                 Ok(Definition {
-                    name:       name,
+                    ntype:      NodeType::Named(name),
                     args:       arglist,
                     body:       childs,
                     references: RefCell::new(vec![]),
@@ -416,6 +417,12 @@ impl Definition {
                 })
             })
         })
+    }
+    fn name(&self) -> &str {
+        match self.ntype {
+            NodeType::Named(ref name) => name,
+            _ => unreachable!()
+        }
     }
 }
 
@@ -434,8 +441,8 @@ impl Pattern {
     {
         let io2 = io.clone();
         
-        let mut argument = block.argument;
-        let mut body = block.body;
+        let argument = block.argument;
+        let body = block.body;
         let name = block.name.to_string();
         let childs = body.childs;
         
@@ -449,7 +456,7 @@ impl Pattern {
             
             process_body(io2, env, childs)
             .map(|(env, body)| -> NodeP {
-                let mut p = Ptr::new(Pattern {
+                let p = Ptr::new(Pattern {
                     target:     Ref::new(name).resolve(&env),
                     env:        env.take(),
                     fields:     Fields {
