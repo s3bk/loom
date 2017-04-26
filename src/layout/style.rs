@@ -1,12 +1,10 @@
 use output::Output;
-use layout::NodeType;
 use std::collections::HashMap;
 use std::rc::Rc;
-use wheel::prelude::*;
 use futures::{Future, future};
 use serde_json;
-
-type FileReadError = <File as AsyncRead>::Error;
+use LoomError;
+use io::*;
 
 #[derive(Debug)]
 pub struct Style<O: Output> {
@@ -30,23 +28,20 @@ struct RawStyle {
 }
 
 pub struct Stylist<O: Output> {
-    map:        HashMap<NodeType, Style<O>>
+    map:        HashMap<String, Style<O>>
 }
 impl<O: Output + 'static> Stylist<O> {
     pub fn load(config: Config, output: Rc<O>)
-     -> Box<Future<Item=Stylist<O>, Error=FileReadError>>
+     -> Box<Future<Item=Stylist<O>, Error=LoomError>>
     {
-        box config.style_dir.get_file("style")
-        .and_then(|file| file.read())
+        box open_read(&config.style_dir, "style")
         .and_then(move |data| {
             let mut font_cache: HashMap<String, _> = HashMap::new();
             
             let raw_map: HashMap<String, RawStyle> = serde_json::from_slice(&data).unwrap();
             for value in raw_map.values() {
                 font_cache.entry(value.font_name.clone()).or_insert_with(|| {
-                    config.font_dir
-                    .get_file(&value.font_name)
-                    .and_then(|file| file.read())
+                    open_read(&config.font_dir, &value.font_name)
                 });
             }
         
@@ -63,18 +58,14 @@ impl<O: Output + 'static> Stylist<O> {
                 (font_name, Rc::new(output.use_font_data(data)))
             ).collect();
             
-            let style_map: HashMap<NodeType, Style<O>> = raw_map.into_iter()
+            let style_map: HashMap<String, Style<O>> = raw_map.into_iter()
             .map(|(name, raw)| {
-                let ntype = match &name as &str {
-                    "*" => NodeType::Default,
-                    _ => NodeType::Named(name)
-                };
                 let style = Style {
                     font_size:  raw.font_size,
                     leading:    raw.leading,
                     font:       output.scale(&fonts[&raw.font_name], raw.font_size)
                 };
-                (ntype, style)
+                (name, style)
             })
             .collect();
             
@@ -84,9 +75,9 @@ impl<O: Output + 'static> Stylist<O> {
         })
     }
     pub fn default(&self) -> &Style<O> {
-        &self.map[&NodeType::Default]
+        &self.map["*"]
     }
-    pub fn get(&self, n: &NodeType) -> &Style<O> {
-        &self.map[n]
+    pub fn get(&self, n: &str) -> &Style<O> {
+        &self.map.get(n).unwrap_or_else(||self.default())
     }
 }

@@ -17,7 +17,6 @@ unicode-brackets = "*"
 roman = "*"
 rmp = "*"
 rmp-serialize = "*"
-rustc-serialize = "*"
 #lz4 = "*"
 #broadcast = "*"
 #mio = "*"
@@ -25,13 +24,15 @@ rustc-serialize = "*"
 itertools = "*"
 #futures = "*"
 inlinable_string = "*"
-ordermap = { git="https://github.com/bluss/ordermap" }
+ordermap = "*"
 num = "*"
 futures = "*"
 owning_ref = "*"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
+jenga = "*"
+marksman_escape = "*"
 
 
 [dependencies.fst]
@@ -49,11 +50,11 @@ optional = true
 [dependencies.image]
 default-features = false
 features = ["png_codec"]
-version = "0.10.3"
+version = "*"
 optional = true
 
 [dependencies.nom]
-git = "https://github.com/Geal/nom.git"
+git = "https://github.com/s3bk/nom.git"
 default_features = false
 features = []
 #version = "0.4"

@@ -18,11 +18,11 @@ pub struct ParagraphLayout<'a, O: Output + 'a> {
 
 struct LineContext {
     measure:    FlexMeasure,
-    path:       u64, // one bit for each branch on this line
-    begin:      usize, // begin of line or branch
-    pos:        usize, // calculation starts here
-    score:      f32, // score at pos
-    branches:   u8 // number of branches so far (<= 64)
+    path:       u64,    // one bit for each branch on this line
+    begin:      usize,  // begin of line or branch
+    pos:        usize,  // calculation starts here
+    score:      f32,    // score at pos
+    branches:   u8      // number of branches so far (<= 64)
 }
 
 impl<'a, O: Output> ParagraphLayout<'a, O>  {
@@ -160,7 +160,7 @@ impl<'a, O: Output> ParagraphLayout<'a, O>  {
                 },
                 Entry::BranchEntry(len) => {
                     use std::cmp;
-                    // b 
+                    // b
                     let b_last = self.complete_line(
                         nodes,
                         LineContext {
@@ -191,8 +191,7 @@ impl<'a, O: Output> ParagraphLayout<'a, O>  {
         
         last
     }
-    
-    
+
     fn maybe_update(&self, c: &LineContext, node: &mut Option<LineBreak>) -> bool {
         if let Some(factor) = c.measure.factor(self.width) {
             let break_score = c.score - factor * factor;

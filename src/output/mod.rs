@@ -1,6 +1,7 @@
 use layout::{FlexMeasure, Surface};
 use std::fmt::Debug;
 use units::*;
+use io;
 
 pub trait Output {
     // 
@@ -12,7 +13,7 @@ pub trait Output {
     
     fn measure(&Self::Font, &str) -> Self::Word;
     
-    fn use_font_data(&self, data: Vec<u8>) -> Self::UnscaledFont;
+    fn use_font_data(&self, data: io::Data) -> Self::UnscaledFont;
     
     fn scale(&self, &Self::UnscaledFont, size: Length) -> Self::Font;
     fn measure_word(&Self::Word, line_width: Length) -> FlexMeasure;

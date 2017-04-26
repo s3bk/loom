@@ -2,7 +2,8 @@ use nom::{self, IResult, ErrorKind, digit, Slice, InputLength, InputIter};
 use std::iter::{Iterator};
 use unicode_categories::UnicodeCategories;
 use unicode_brackets::UnicodeBrackets;
-use inlinable_string::InlinableString;
+use slug;
+use super::IString;
 
 macro_rules! alt_apply {
     ($i:expr, $arg:expr, $t:ident $(| $rest:tt)*) =>
@@ -14,10 +15,10 @@ macro_rules! slug {
     ($($t:tt)*) => ()
 }
 
-//#[cfg(debug_assertions)]
-//type Data<'a> = slug::Slug<'a>;
+#[cfg(debug_assertions)]
+type Data<'a> = slug::Slug<'a>;
         
-//#[cfg(not(debug_assertions))]
+#[cfg(not(debug_assertions))]
 type Data<'a> = &'a str;
 
 #[macro_export]
@@ -94,14 +95,12 @@ named!(indent_any,
     )
 );
 
-pub type String = InlinableString;
-
 #[derive(Debug, PartialEq)]
 pub enum Placeholder {
     Body,
     Argument(usize),
     Arguments,
-    Unknown(String)
+    Unknown(IString)
 }
 
 named!(placeholder <Placeholder>,
@@ -116,18 +115,18 @@ named!(placeholder <Placeholder>,
 
 #[derive(Debug, PartialEq)]
 pub struct Group {
-    pub opening: String,
-    pub closing: String,
+    pub opening: IString,
+    pub closing: IString,
     pub content: Vec<Item>
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Item {
-    Word(String),
-    Symbol(String),
-    Punctuation(String),
+    Word(IString),
+    Symbol(IString),
+    Punctuation(IString),
     Placeholder(Placeholder),
-    Token(String),
+    Token(IString),
     Group(Group)
 }
 
@@ -218,7 +217,7 @@ fn test_letter_sequence() {
     );
 }
 
-fn string_esc<'a>(input: Data<'a>) -> IResult<Data<'a>, String> {
+fn string_esc<'a>(input: Data<'a>) -> IResult<Data<'a>, IString> {
     use std::iter::FromIterator;
     map!(input, many1!(
         complete!(alt!(
@@ -229,11 +228,11 @@ fn string_esc<'a>(input: Data<'a>) -> IResult<Data<'a>, String> {
           | map!(tag!(r"\ "),     { |_| " "  })
           | map!(tag!(r##"\""##), { |_| "\"" })
         ))),
-        |v: Vec<&str>| InlinableString::from_iter(v.iter().flat_map(|s| s.chars()))
+        |v: Vec<&str>| IString::from_iter(v.iter().flat_map(|s| s.chars()))
     )
 }
 
-named!(string <String>,
+named!(string <IString>,
     alt!(
         complete!(delimited!(tag!("\""), string_esc, tag!("\"")))
       | map!(take_until_either!("\" \t\n"), |s: Data| s.into())
@@ -242,13 +241,13 @@ named!(string <String>,
 #[test]
 fn test_string() {
     slug!(
-        string("hallo ") => Done(" ", String::from("hallo"));
-        string("hallo welt") => Done(" welt", String::from("hallo"));
-        string("<hallo >") => Done(" >", String::from("<hallo"));
-        string(r"hallo\ welt") => Done(r" welt", String::from(r"hallo\"));
-        string(r##""hallo welt""##) => Done("", String::from("hallo welt"));
-        string(r##""hallo\ welt" .."##) => Done(" ..", String::from(r"hallo welt"));
-        string(r##""hallo\nwelt""##) => Done("", String::from("hallo\nwelt"));
+        string("hallo ") => Done(" ", IString::from("hallo"));
+        string("hallo welt") => Done(" welt", IString::from("hallo"));
+        string("<hallo >") => Done(" >", IString::from("<hallo"));
+        string(r"hallo\ welt") => Done(r" welt", IString::from(r"hallo\"));
+        string(r##""hallo welt""##) => Done("", IString::from("hallo welt"));
+        string(r##""hallo\ welt" .."##) => Done(" ..", IString::from(r"hallo welt"));
+        string(r##""hallo\nwelt""##) => Done("", IString::from("hallo\nwelt"));
     );
 }
 
@@ -337,31 +336,32 @@ fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item> {
 fn test_item() {
     slug!(
         item("<foo>\n") => Done("\n", Item::Group(Group {
-            opening: "<",
-            content: vec![Item::Word("foo")],
-            closing: ">"
+            opening: "<".into(),
+            content: vec![Item::Word("foo".into())],
+            closing: ">".into()
         }));
         item("<foo> baz") => Done(" baz", Item::Group(Group {
-            opening: "<",
-            content: vec![Item::Word("foo")],
-            closing: ">"
+            opening: "<".into(),
+            content: vec![Item::Word("foo".into())],
+            closing: ">".into()
         }));
         item("<foo bar> baz") => Done(" baz", Item::Group(Group {
-            opening: "<",
+            opening: "<".into(),
             content: vec![
-                Item::Word("foo"),
-                Item::Word("bar")
+                Item::Word("foo".into()),
+                Item::Word("bar".into())
             ],
-            closing: ">"
+            closing: ">".into()
         }));
         item("<baä>\n") => Done("\n", Item::Group(Group {
-            opening: "<",
-            content: vec![Item::Word("baä")],
-            closing: ">"
+            opening: "<".into(),
+            content: vec![Item::Word("baä".into())],
+            closing: ">".into()
         }));
-        item("foo baz") => Done(" baz", Item::Word("foo"));
+        item("foo baz") => Done(" baz", Item::Word("foo".into()));
         item("$body\n") => Done("\n", Item::Placeholder(Placeholder::Body));
         item("$3\n") => Done("\n", Item::Placeholder(Placeholder::Argument(3)));
+        item("\\foo\n") => Done("\n", Item::Token("foo".into()));
         item("\n") => Error;
     );
 }
@@ -395,30 +395,30 @@ fn leaf(input: Data, expected_indent: usize) -> IResult<Data, Vec<Item>> {
 #[test]
 fn test_leaf() {
     slug!(
-        leaf("x\n\ne", 0) => Done("\ne", vec![Item::Word("x")]);
-        leaf("x \n", 0) => Done("", vec![Item::Word("x")]);
+        leaf("x\n\ne", 0) => Done("\ne", vec![Item::Word("x".into())]);
+        leaf("x \n", 0) => Done("", vec![Item::Word("x".into())]);
         leaf("x $args\n", 0) => Done("", vec![
-            Item::Word("x"),
+            Item::Word("x".into()),
             Item::Placeholder(Placeholder::Arguments)
         ]);
-        leaf("x \ny\n", 0) => Done("", vec![Item::Word("x"), Item::Word("y")]);
+        leaf("x \ny\n", 0) => Done("", vec![Item::Word("x".into()), Item::Word("y".into())]);
         leaf("Hello world\nThis is the End .\n", 0) => Done("", vec![
-            Item::Word("Hello"),
-            Item::Word("world"),
-            Item::Word("This"),
-            Item::Word("is"),
-            Item::Word("the"),
-            Item::Word("End"),
-            Item::Punctuation(".")
+            Item::Word("Hello".into()),
+            Item::Word("world".into()),
+            Item::Word("This".into()),
+            Item::Word("is".into()),
+            Item::Word("the".into()),
+            Item::Word("End".into()),
+            Item::Punctuation(".".into())
         ]);
         leaf("        foo\n        bar \n", 2) => Done("", vec![
-            Item::Word("foo"),
-            Item::Word("bar")
+            Item::Word("foo".into()),
+            Item::Word("bar".into())
         ]);
         leaf("\tx  y\n\tz\nq", 1) => Done("q", vec![
-            Item::Word("x"),
-            Item::Word("y"),
-            Item::Word("z")
+            Item::Word("x".into()),
+            Item::Word("y".into()),
+            Item::Word("z".into())
         ]);
     );
 }
@@ -442,33 +442,33 @@ fn list_item(input: Data, expected_indent: usize) -> IResult<Data, Vec<Item>> {
 fn test_list_item() {
     slug!(
         list_item("  - hello world", 0) => Done("", vec![
-            Item::Word("hello"),
-            Item::Word("world")
+            Item::Word("hello".into()),
+            Item::Word("world".into())
         ]);
-        list_item("      - hello", 1) => Done("", vec![Item::Word("hello")]);
+        list_item("      - hello", 1) => Done("", vec![Item::Word("hello".into())]);
         list_item("  - hello\n    world\n", 0) => Done("\n", vec![
-            Item::Word("hello"),
-            Item::Word("world")
+            Item::Word("hello".into()),
+            Item::Word("world".into())
         ]);
     );
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Parameter {
-    pub name: String,
+    pub name: IString,
     pub args: Vec<Item>,
     pub value: BlockBody
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Command {
-    pub name: String,
-    pub args: Vec<String>
+    pub name: IString,
+    pub args: Vec<IString>
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Block {
-    pub name:       String,
+    pub name:       IString,
     pub argument:   Vec<Item>,
     pub body:       BlockBody
 }
@@ -528,8 +528,8 @@ fn block_placeholder(input: Data, indent_level: usize) -> IResult<Data, Body> {
 #[test]
 fn test_block_placeholder() {
     slug!(
-        block_placeholder("    $foo\n", 1) =>
-            Done("", Body::Placeholder(Var::Name("foo")));
+        block_placeholder("    $0\n", 1) =>
+            Done("", Body::Placeholder(Placeholder::Argument(0)));
     );
 }
 
@@ -577,9 +577,10 @@ pub fn command(input: Data, indent_level: usize) -> IResult<Data, Command> {
 fn test_command() {
     slug!(
         command("!foo \"<bar\" \"baz>\"\n", 0) => Done("", Command {
-            name: "foo", args: vec![
-                "<bar".to_owned(),
-                "baz>".to_owned()
+            name: "foo".into(),
+            args: vec![
+                "<bar".into(),
+                "baz>".into()
             ]
         });
     );
@@ -603,8 +604,8 @@ pub fn pattern(input: Data, indent_level: usize) -> IResult<Data, Parameter> {
 fn test_pattern_1() {
     slug!(
         pattern("/foo x\n", 0) => Done("", Parameter {
-            name:   "foo",
-            args:   vec![Item::Word("x")],
+            name:   "foo".into(),
+            args:   vec![Item::Word("x".into())],
             value:  BlockBody {
                 commands:   vec![],
                 parameters: vec![],
@@ -617,14 +618,14 @@ fn test_pattern_1() {
 fn test_pattern_2() {
     slug!(
         pattern("/foo x\n    bar\nx", 0) => Done("x", Parameter {
-            name:   "foo",
-            args:   vec![Item::Word("x")],
+            name:   "foo".into(),
+            args:   vec![Item::Word("x".into())],
             value:  BlockBody {
                 commands:   vec![],
                 parameters: vec![],
                 childs:     vec![
                     Body::Leaf(vec![
-                        Item::Word("bar")
+                        Item::Word("bar".into())
                     ])
                 ]
             }
@@ -634,16 +635,16 @@ fn test_pattern_2() {
 #[test]
 fn test_pattern_3() {
     slug!(
-        pattern("/foo x\n    bar $baz\nx", 0) => Done("x", Parameter {
-            name:   "foo",
-            args:   vec![Item::Word("x")],
+        pattern("/foo x\n    bar $0\nx", 0) => Done("x", Parameter {
+            name:   "foo".into(),
+            args:   vec![Item::Word("x".into())],
             value:  BlockBody {
                 commands:   vec![],
                 parameters: vec![],
                 childs:     vec![
                     Body::Leaf(vec![
-                        Item::Word("bar"),
-                        Item::Placeholder(Var::Name("baz"))
+                        Item::Word("bar".into()),
+                        Item::Placeholder(Placeholder::Argument(0))
                     ])
                 ]
             }
@@ -690,14 +691,14 @@ pub fn block(input: Data, indent_level: usize) -> IResult<Data, Block> {
 fn test_block_1() {
     slug!(
         block(":foo\n    x\nx", 0) => Done("x", Block {
-            name:       "foo",
+            name:       "foo".into(),
             argument:   vec![],
             body: BlockBody {
                 commands:   vec![],
                 parameters: vec![],
                 childs:     vec![
                     Body::Leaf(vec![
-                        Item::Word("x"),
+                        Item::Word("x".into()),
                     ])
                 ]
             }
@@ -708,14 +709,14 @@ fn test_block_1() {
 fn test_block_2() {
     slug!(
         block(":foo\n\n    x\nx", 0) => Done("x", Block {
-            name:       "foo",
+            name:       "foo".into(),
             argument:   vec![],
             body: BlockBody {
                 commands:   vec![],
                 parameters: vec![],
                 childs:     vec![
                     Body::Leaf(vec![
-                        Item::Word("x"),
+                        Item::Word("x".into()),
                     ])
                 ]
             }
@@ -726,50 +727,50 @@ fn test_block_2() {
 fn test_block_3() {
     slug!(
         block(":foo\n    !x\n    x\nx", 0) => Done("x", Block {
-            name:       "foo",
+            name:       "foo".into(),
             argument:   vec![],
             body: BlockBody {
                 commands: vec![
                     Command {
-                        name:   "x",
+                        name:   "x".into(),
                         args:   vec![]
                     }
                 ],
                 parameters: vec![],
                 childs:     vec![
                     Body::Leaf(vec![
-                        Item::Word("x"),
+                        Item::Word("x".into()),
                     ])
                 ]
             }
         });
         block(":foo A\n    !x\n    x\nx", 0) => Done("x", Block {
-            name:       "foo",
-            argument:   vec![Item::Word("A")],
+            name:       "foo".into(),
+            argument:   vec![Item::Word("A".into())],
             body: BlockBody {
                 commands: vec![
                     Command {
-                        name:   "x",
+                        name:   "x".into(),
                         args:   vec![]
                     }
                 ],
                 parameters: vec![],
                 childs:     vec![
                     Body::Leaf(vec![
-                        Item::Word("x"),
+                        Item::Word("x".into()),
                     ])
                 ]
             }
         });
         block(":foo A\n    :bar\n    x\nx", 0) => Done("x", Block {
-            name:       "foo",
-            argument:   vec![Item::Word("A")],
+            name:       "foo".into(),
+            argument:   vec![Item::Word("A".into())],
             body: BlockBody {
                 commands:   vec![],
                 parameters: vec![],
                 childs:     vec![
                     Body::Block(Block {
-                        name:       "bar",
+                        name:       "bar".into(),
                         argument:   vec![],
                         body: BlockBody {
                             commands:   vec![],
@@ -778,21 +779,21 @@ fn test_block_3() {
                         }
                     }),
                     Body::Leaf(vec![
-                        Item::Word("x"),
+                        Item::Word("x".into()),
                     ])
                 ]
             }
         });
         
         block(":foo A\n    :bar\n\n    x  y\n\tz\nx", 0) => Done("x", Block {
-            name:       "foo",
-            argument:   vec![Item::Word("A")],
+            name:       "foo".into(),
+            argument:   vec![Item::Word("A".into())],
             body: BlockBody {
                 commands:   vec![],
                 parameters: vec![],
                 childs:     vec![
                     Body::Block(Block {
-                        name:       "bar",
+                        name:       "bar".into(),
                         argument:   vec![],
                         body: BlockBody {
                             commands:   vec![],
@@ -801,9 +802,9 @@ fn test_block_3() {
                         }
                     }),
                     Body::Leaf(vec![
-                        Item::Word("x"),
-                        Item::Word("y"),
-                        Item::Word("z"),
+                        Item::Word("x".into()),
+                        Item::Word("y".into()),
+                        Item::Word("z".into()),
                     ])
                 ]
             }

@@ -22,6 +22,7 @@ pub struct Config {
 #[derive(Debug)]
 pub enum ParseError {
     IoRead(<File as AsyncRead>::Error),
+    IoOpen(<Directory as AsyncOpen>::Error),
     Json(serde_json::Error)
 }
 impl Config {
@@ -38,7 +39,7 @@ impl Config {
                 let yarn = Directory::open(&raw.yarn_dir);
             
                 styles.join4(fonts, data, yarn)
-                .map_err(|e| ParseError::IoRead(e))
+                .map_err(|e| ParseError::IoOpen(e))
             })
             .map(|(styles, fonts, data, yarn)| Config {
                 style_dir:  styles,

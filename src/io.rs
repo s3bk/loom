@@ -18,6 +18,7 @@ use super::LoomError;
 pub type TypeId = u16;
 pub type DataSize = u32;
 pub type Stamp = (u32, u32);
+pub type Data = <File as AsyncRead>::Buffer;
 
 pub struct IoCreate {
     stamp:  Stamp,
@@ -69,11 +70,10 @@ impl Io {
         
         trace!(self.log, "load_yarn");
         
-        box yarn.read()
-        .map_err(|e| LoomError::FileRead(e))
+        box read(yarn)
         .and_then(move |data| {
             let io = io;
-            let string = String::from_utf8(data).expect("invalid utf8");
+            let string = String::from_utf8(data.to_vec()).expect("invalid utf8");
             io.yarn(string)
         })
     }
@@ -178,4 +178,23 @@ impl IoMachine {
             log:    Log::root().branch()
         }
     }
+}
+
+pub fn open_dir(name: &str) -> Box<Future<Item=Directory, Error=LoomError>>
+{
+    box Directory::open(name)
+    .map_err(|e| LoomError::DirectoryOpen(e))
+}
+pub fn open(dir: &Directory, name: &str) -> Box<Future<Item=File, Error=LoomError>>
+{
+    box dir.get_file(name)
+    .map_err(|e| LoomError::DirectoryGetFile(e))
+}
+pub fn read(file: File) -> Box<Future<Item=Data, Error=LoomError>> {
+    box file.read().map_err(|e| LoomError::FileRead(e))
+}
+pub fn open_read(dir: &Directory, name: &str) -> Box<Future<Item=Data, Error=LoomError>> {
+    box dir.get_file(name)
+    .map_err(|e| LoomError::DirectoryGetFile(e))
+    .and_then(|file| file.read().map_err(|e| LoomError::FileRead(e)))
 }

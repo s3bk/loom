@@ -6,7 +6,7 @@ use layout::{Atom, Writer};
 use environment::{LocalEnv, GraphChain, Fields, LayoutChain};
 use io::{Stamp, Io};
 use woot::WString;
-use inlinable_string::InlinableString;
+use super::IString;
 pub use parser::Placeholder;
 
 /// The Document is a Directed Acyclic Graph.
@@ -151,11 +151,11 @@ impl Ref {
 }
 
 pub struct GroupRef {
-    key: (InlinableString, InlinableString),
+    key: (IString, IString),
     target: RefCell<Option<NodeP>>
 }
 impl GroupRef {
-    pub fn new(opening: InlinableString, closing: InlinableString) -> GroupRef {
+    pub fn new(opening: IString, closing: IString) -> GroupRef {
         GroupRef {
             key:    (opening, closing),
             target: RefCell::new(None)
@@ -172,7 +172,7 @@ impl GroupRef {
             None => None
         }
     }
-    pub fn key(&self) -> &(InlinableString, InlinableString) {
+    pub fn key(&self) -> &(IString, IString) {
         &self.key
     }
 }

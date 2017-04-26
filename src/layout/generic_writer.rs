@@ -162,10 +162,14 @@ impl<'a, O: Output + 'static> Writer for GenericWriter<'a, O> {
         self.state |= glue;
     }
     
-    fn with(&mut self, name: &NodeType, f: &mut FnMut(&mut Writer)) {
+    fn with(&mut self, name: &str, 
+        head: &mut FnMut(&mut Writer),
+        body: &mut FnMut(&mut Writer)
+    ) {
         let old_style = self.style;
         self.style = self.styler.get(name);
-        f(self);
+        head(self);
+        body(self);
         self.style = old_style;
     }
 }

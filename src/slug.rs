@@ -6,9 +6,10 @@ use inlinable_string::InlinableString;
 macro_rules! slug {
     (__internal Done, $log:ident, $r:ident, ($rem:expr, $out:expr)) => {
         {
+        use nom::Compare;
         match $r {
-            $crate::IResult::Done(rem, out) => {
-                if rem.compare($rem) != $crate::CompareResult::Ok {
+            nom::IResult::Done(rem, out) => {
+                if rem.compare($rem) != nom::CompareResult::Ok {
                     let expected: &str = $rem.into();
                     let found: &str = rem.into();
                     println!("expected {:?}, found {:?}", expected, found);
@@ -20,11 +21,11 @@ macro_rules! slug {
                 }
                 println!("ok");
             },
-            $crate::IResult::Error(e) => {
+            nom::IResult::Error(e) => {
                 println!("error: {:?}", e);
                 panic!();
             },
-            $crate::IResult::Incomplete(e) => {
+            nom::IResult::Incomplete(e) => {
                 println!("incomplete: {:?}", e);
                 panic!();
             }
@@ -35,12 +36,12 @@ macro_rules! slug {
     
     (__internal Error, $log:ident, $r:ident, ) => {
         match $r {
-            $crate::IResult::Done(_, _) => {
+            nom::IResult::Done(_, _) => {
                 println!("did not fail");
                 panic!();
             },
-            $crate::IResult::Error(_) => println!("ok"),
-            $crate::IResult::Incomplete(e) => {
+            nom::IResult::Error(_) => println!("ok"),
+            nom::IResult::Incomplete(e) => {
                 println!("incomplete: {:?}", e);
                 panic!();
             }
@@ -188,7 +189,7 @@ impl<'a> Slice<RangeTo<usize>> for Slug<'a> {
 }
 impl<'a> Slice<RangeFull> for Slug<'a> {
     #[inline(always)]
-    fn slice(&self, r: RangeFull) -> Slug<'a> {
+    fn slice(&self, _r: RangeFull) -> Slug<'a> {
         Slug {
             data:           self.data,
             slice:          self.slice,

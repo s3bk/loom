@@ -7,6 +7,7 @@ use rusttype;
 use std::fmt::{Debug, self};
 use output::Output;
 use units::*;
+use io;
 
 #[derive(Clone)]
 pub struct RustTypeFont {
@@ -84,7 +85,11 @@ impl RustTypeWordInner {
         use rusttype::point;
         
         let it = self.glyphs.iter()
-        .map(|&(id, dx)|(self.font.glyph(id).unwrap().scaled(self.scale).positioned(point(pos.0+dx, pos.1))));
+        .map(|&(id, dx)| (
+            self.font.glyph(id).unwrap()
+            .scaled(self.scale)
+            .positioned(point(pos.0+dx, pos.1))
+        ));
         for g in it {
             if let Some(bb) = g.pixel_bounding_box() {
                 g.draw(|x, y, v| {
@@ -169,9 +174,9 @@ impl Output for PngOutput {
         }
     }
 
-    fn use_font_data(&self, data: Vec<u8>) -> UnscaledRustTypeFont {
+    fn use_font_data(&self, data: io::Data) -> UnscaledRustTypeFont {
         UnscaledRustTypeFont {
-            font: rusttype::FontCollection::from_bytes(data).font_at(0).unwrap()
+            font: rusttype::FontCollection::from_bytes(data.to_vec()).font_at(0).unwrap()
         }
     }
     

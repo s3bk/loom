@@ -1,14 +1,16 @@
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
+use std::fmt;
 use environment::{GraphChain, LocalEnv, Fields, LayoutChain};
 use document::*;
 use parser;
 use io::Io;
-use layout::{Atom, Glue, Writer, NodeType};
+use layout::{Atom, Glue, Writer};
 use commands::{CommandComplete};
-use inlinable_string::InlinableString;
 use futures::future::{Future, join_all, ok};
-use super::LoomError;
+use super::{LoomError, IString};
+use wheel::Log;
+use slug;
 
 type NodeFuture = Box<Future<Item=NodeP, Error=LoomError>>;
 
@@ -25,7 +27,7 @@ fn process_body(io: Io, env: GraphChain, childs: Vec<parser::Body>)
     let nodes = childs.into_iter()
     .map(|node| {
         match node {
-            Body::Block(b) => box Pattern::from_block(&io, &env, b),
+            Body::Block(b) => box Block::from_block(&io, &env, b),
             Body::Leaf(items) => wrap(Leaf::from(&io, &env, items)),
             Body::List(items) => wrap(List::from(&io, &env, items)),
             Body::Placeholder(p) => wrap(p)
@@ -40,7 +42,7 @@ fn process_body(io: Io, env: GraphChain, childs: Vec<parser::Body>)
 }
 
 pub struct Word {
-    content:    InlinableString,
+    content:    IString,
 }
 impl Word {
     pub fn new(s: &str) -> Word {
@@ -51,6 +53,7 @@ impl Word {
 }
 impl Node for Word {
     fn layout(&self, env: LayoutChain, w: &mut Writer) {
+        println!("> {}", self.content);
         env.hyphenate(w, Atom {
             text:   &self.content,
             left:   Glue::space(),
@@ -58,9 +61,14 @@ impl Node for Word {
         });
     }
 }
+impl fmt::Debug for Word {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, r#"w"{}""#, self.content)
+    }
+}
 
 pub struct Punctuation {
-    content:    InlinableString,
+    content:    IString,
 }
 impl Punctuation {
     pub fn new(s: &str) -> Punctuation {
@@ -78,9 +86,14 @@ impl Node for Punctuation {
         });
     }
 }
+impl fmt::Debug for Punctuation {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, r#"p"{}""#, self.content)
+    }
+}
 
 pub struct Symbol {
-    content:    InlinableString,
+    content:    IString,
 }
 impl Symbol {
     pub fn new(env: &GraphChain, s: &str) -> Symbol {
@@ -103,13 +116,18 @@ impl Node for Symbol {
         });
     }
 }
+impl fmt::Debug for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, r#"s"{}""#, self.content)
+    }
+}
 
 enum Token {
     HFill,
-    Other(InlinableString)
+    Other(IString)
 }
 impl Token {
-    fn new(s: InlinableString) -> Token {
+    fn new(s: IString) -> Token {
         match &*s {
             "hfill" => Token::HFill,
             _ => Token::Other(s)
@@ -160,8 +178,8 @@ impl Group {
         let mut g = Ptr::new(Group {
             target:     GroupRef::new(g.opening, g.closing),
             fields:     Fields {
-                args:   Some(content),
-                body:   None
+                args:   None,
+                body:   Some(content),
             }
         });
         {
@@ -188,7 +206,7 @@ impl Node for Group {
                 text:   &open_close.0
             });
             
-            match self.fields.args {
+            match self.fields.body {
                 Some(ref n) => n.layout(env, w),
                 None => unreachable!()
             }
@@ -324,8 +342,21 @@ impl Module {
         use nom::IResult;
         use futures::future::err;
         
-        let body = match parser::block_body(&input, 0) {
-            IResult::Done(_, out) => out,
+        #[cfg(debug_assertions)]
+        let input = slug::wrap(&input);
+        
+        #[cfg(not(debug_assertions))]
+        let input = &input;
+        
+        let body = match parser::block_body(input, 0) {
+            IResult::Done(rem, out) => {
+                if rem.len() > 0 {
+                    let s: &str = rem.into();
+                    warn!(io.log, "remaining:\n{}", s);
+                }
+                debug!(io.log, "{:?}", out);
+                out
+            },
             _ => {
                 return box err(LoomError::Parser);
             }
@@ -358,7 +389,7 @@ impl Node for Module {
 }
 
 pub struct Definition {
-    ntype:      NodeType,
+    name:       String,
 
     args:       NodeListP,
     
@@ -376,10 +407,10 @@ impl Node for Definition {
         out.push(self.body.clone().into());
     }
     fn layout(&self, env: LayoutChain, w: &mut Writer) {
-        w.with(&self.ntype, &mut |w| {
-            self.args.layout(env.link(self), w);
-            self.body.layout(env.link(self), w);
-        })
+        w.with(&self.name,
+            &mut |w| self.args.layout(env /* .link(self) */, w),
+            &mut |w| self.body.layout(env /* .link(self) */, w)
+        )
     }
     fn add_ref(&self, source: &Rc<Node>) {
         self.references.borrow_mut().push(Rc::downgrade(source));
@@ -409,7 +440,7 @@ impl Definition {
             process_body(io, env, childs)
             .and_then(move |(env, childs)| {
                 Ok(Definition {
-                    ntype:      NodeType::Named(name),
+                    name:       name,
                     args:       arglist,
                     body:       childs,
                     references: RefCell::new(vec![]),
@@ -419,14 +450,11 @@ impl Definition {
         })
     }
     fn name(&self) -> &str {
-        match self.ntype {
-            NodeType::Named(ref name) => name,
-            _ => unreachable!()
-        }
+        &self.name
     }
 }
 
-pub struct Pattern {
+pub struct Block {
     // the macro itself
     target: Ref,
     
@@ -435,7 +463,7 @@ pub struct Pattern {
     fields: Fields
 }
 
-impl Pattern {
+impl Block {
     fn from_block(io: &Io, env: &GraphChain, block: parser::Block)
      -> Box<Future<Item=NodeP, Error=LoomError>>
     {
@@ -456,7 +484,7 @@ impl Pattern {
             
             process_body(io2, env, childs)
             .map(|(env, body)| -> NodeP {
-                let p = Ptr::new(Pattern {
+                let p = Ptr::new(Block {
                     target:     Ref::new(name).resolve(&env),
                     env:        env.take(),
                     fields:     Fields {
@@ -469,7 +497,7 @@ impl Pattern {
         })
     }
 }
-impl Node for Pattern {
+impl Node for Block {
     fn childs(&self, out: &mut Vec<NodeP>) {
         self.env.childs(out);
         self.fields.childs(out);
@@ -478,6 +506,7 @@ impl Node for Pattern {
         if let Some(ref target) = self.target.get() {
             target.layout(env.link(self), w);
         } else {
+            warn!(Log::root(), "unresolved name: {}", self.target.name());
             for s in &["unresolved" as &str, "macro" as &str, self.target.name()] {
                 w.word(Atom {
                     left:   Glue::space(),

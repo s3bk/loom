@@ -110,8 +110,9 @@ pub trait Object: Debug {
 
 #[derive(PartialEq, Eq, Hash)]
 pub enum NodeType {
-    Section(String),
-    Named(String),
+    Section(String), // a block with the given name
+    Header(String),  // the header for the block of the given name
+    Body(String),    // the body for "
     Default
 }
 
@@ -128,7 +129,10 @@ pub trait Writer {
     
     fn object(&mut self, _item: Box<Object>) {}
     
-    fn with(&mut self, ty: &NodeType, f: &mut FnMut(&mut Writer));
+    fn with(&mut self, name: &str,
+        head: &mut FnMut(&mut Writer),
+        body: &mut FnMut(&mut Writer)
+    );
 }
 
 pub trait Surface {

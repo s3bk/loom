@@ -1,12 +1,10 @@
 use environment::{LocalEnv, GraphChain};
-use io::Io;
+use io::{Io, open_read};
 use document::NodeP;
 use std::boxed::FnBox;
 use futures::Future;
 use futures::future::{ok, join_all};
-use inlinable_string::InlinableString;
-use wheel::prelude::*;
-use super::LoomError;
+use super::{IString, LoomError};
 
 pub fn register(env: &mut LocalEnv) {
  // env.add_command("fontsize",     cmd_fontsize);
@@ -47,7 +45,7 @@ fn complete<F: FnOnce(&GraphChain, &mut LocalEnv) + 'static>(f: F) -> CommandCom
 
 pub type CommandComplete = Box<FnBox(&GraphChain, &mut LocalEnv)>;
 pub type CommandResult = Result<Box<Future<Item=CommandComplete, Error=LoomError>>, LoomError>;
-pub type Command = fn(&Io, &GraphChain, Vec<InlinableString>) -> CommandResult;
+pub type Command = fn(&Io, &GraphChain, Vec<IString>) -> CommandResult;
 
 /*
 fn cmd_fontsize(_io: &Io, _env: GraphChain, args: Vec<String>)
@@ -63,7 +61,7 @@ fn cmd_fontsize(_io: &Io, _env: GraphChain, args: Vec<String>)
     box ok(complete(|_| ()))
 }
 */
-fn cmd_group(io: &Io, _env: &GraphChain, mut args: Vec<InlinableString>)
+fn cmd_group(io: &Io, _env: &GraphChain, mut args: Vec<IString>)
  -> CommandResult
 {
     cmd_args!{args;
@@ -84,7 +82,7 @@ fn cmd_group(io: &Io, _env: &GraphChain, mut args: Vec<InlinableString>)
     })))
 }
 
-fn cmd_hyphens(io: &Io, _env: &GraphChain, args: Vec<InlinableString>)
+fn cmd_hyphens(io: &Io, _env: &GraphChain, args: Vec<IString>)
  -> CommandResult
 {
     use hyphenation::Hyphenator;
@@ -92,11 +90,9 @@ fn cmd_hyphens(io: &Io, _env: &GraphChain, args: Vec<InlinableString>)
     if args.len() != 1 {
         return Err(LoomError::MissingArg("filename"))
     }
-    let f = io.config(|conf| conf.data_dir.get_file(&args[0]))
-    .map_err(move |e| LoomError::DirectoryGetFile(args[0].to_string(), e))
-    .and_then(|file| file.read().map_err(|e| LoomError::FileRead(e)))
+    let f = io.config(|conf| open_read(&conf.data_dir, &args[0]))
     .and_then(|data| {
-        Hyphenator::load(data)
+        Hyphenator::load(data.to_vec())
         .map_err(|e| LoomError::Hyphenator(e))
         .and_then(|h| 
             Ok(complete(|_env: &GraphChain, local: &mut LocalEnv| local.set_hyphenator(h)))
@@ -105,7 +101,7 @@ fn cmd_hyphens(io: &Io, _env: &GraphChain, args: Vec<InlinableString>)
     Ok(box f)
 }
 
-fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
+fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<IString>)
  -> CommandResult
 {
     use blocks::Module;
@@ -120,13 +116,9 @@ fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
         debug!(io.log, "load '{}'", name);
         
         let filename = format!("{}.yarn", name);
-        io.config(|conf| conf.yarn_dir
-            .get_file(&filename)
-            .map_err(|e| LoomError::DirectoryGetFile(filename, e))
-        )
-        .and_then(|file| file.read().map_err(|e| LoomError::FileRead(e)))
+        io.config(|conf| open_read(&conf.yarn_dir, &filename))
         .and_then(move |data| {
-            let string = String::from_utf8(data).unwrap();
+            let string = String::from_utf8(data.to_vec()).unwrap();
             Module::parse(io, env, string)
         })
         .map(|module| (module, name))
@@ -150,7 +142,7 @@ fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<InlinableString>)
 ///  3. if not present, check presence of file in $LOOM_DATA
 ///  4. otherwise gives an error
 
-fn cmd_use(io: &Io, _env: &GraphChain, args: Vec<InlinableString>)
+fn cmd_use(io: &Io, _env: &GraphChain, args: Vec<IString>)
  -> CommandResult
 {
     let io = io.clone();
@@ -208,7 +200,7 @@ fn cmd_use(io: &Io, _env: &GraphChain, args: Vec<InlinableString>)
 }
 
 
-fn cmd_symbol(_io: &Io, _env: &GraphChain, mut args: Vec<InlinableString>)
+fn cmd_symbol(_io: &Io, _env: &GraphChain, mut args: Vec<IString>)
  -> CommandResult
 {
 

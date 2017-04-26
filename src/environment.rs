@@ -5,10 +5,10 @@ use document::{Node, NodeP, NodeListP};
 use io::{Io};
 use hyphenation::Hyphenator;
 use commands::Command;
-use inlinable_string::InlinableString;
 use ordermap::OrderMap;
 use layout::{Atom, Glue, Writer};
 use wheel::{Directory};
+use super::IString;
 
 /// The Environment can only be changed within the Block::parse call
 /// Is is therefore allowed to cache results whithin methods that do not involve
@@ -22,9 +22,9 @@ pub struct LocalEnv {
     paths:          Vec<Directory>,
     commands:       HashMap<String, Command>,
     targets:        HashMap<String, NodeP>,
-    groups:         OrderMap<(InlinableString, InlinableString), NodeP>,
+    groups:         OrderMap<(IString, IString), NodeP>,
     hyphenator:     Option<Hyphenator>,
-    symbols:        OrderMap<InlinableString, InlinableString>
+    symbols:        OrderMap<IString, IString>
 }
 
 pub struct Fields {
@@ -60,10 +60,9 @@ impl LocalEnv {
         self.paths.push(dir);
     }
     pub fn add_target(&mut self, name: String, target: NodeP) {
-        println!("add_target({}, …)", name);
         self.targets.insert(name, target);
     }
-    pub fn add_group(&mut self, opening: InlinableString, closing: InlinableString, node: NodeP) {
+    pub fn add_group(&mut self, opening: IString, closing: IString, node: NodeP) {
         self.groups.insert((opening, closing), node);
     }
     pub fn childs(&self, out: &mut Vec<NodeP>) {
@@ -136,7 +135,7 @@ impl GraphChain {
         self.find(|env| env.targets.get(name))
     }
     
-    pub fn get_group(&self, q: &(InlinableString, InlinableString)) -> Option<&NodeP> {
+    pub fn get_group(&self, q: &(IString, IString)) -> Option<&NodeP> {
         self.find(|env| env.groups.get(q))
     }
 
