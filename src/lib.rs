@@ -16,7 +16,6 @@ extern crate serde_json;
 extern crate unicode_categories;
 extern crate unicode_brackets;
 extern crate marksman_escape;
-extern crate jenga;
 
 extern crate roman;
 extern crate fst;
@@ -27,7 +26,7 @@ extern crate woot;
 //extern crate mio;
 extern crate futures;
 //extern crate curl;
-extern crate inlinable_string;
+extern crate istring;
 extern crate ordermap;
 extern crate num;
 
@@ -59,9 +58,6 @@ pub mod commands;
 pub mod output;
 pub mod units;
 pub mod config;
-
-pub type IString = String;
-//pub type IString = InlinableIString;
 
 use wheel::prelude::*;
 

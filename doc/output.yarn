@@ -1,0 +1,66 @@
+:chapter Output State
+    :section Operations
+        :subsection Assign
+            overrides the previous state with a new value
+        
+        :subsection Mix
+            compute the new state based on one or more already defined values
+            
+            Mixing operations:
+                "avg(2: v0, 1: v1, …)" the weighted average of v0 and v1 where v0 has twice the weight as v1
+                 "min(v0, v1, …)" minimum value of the arguments v0 and v1, …
+                 "max(v0, v1, …)" maximum value of arguments v0, v1, …
+        
+        :subsection Sources
+            "parent" properties of the parent <Output State>
+            "prev" properties of the previous <Output State> ?
+            "name" properties of the previously defined <Output State> "name"
+
+Output types:
+  - Pixel based
+      - Screen
+      - PNG
+  - Vector based
+      - SVG
+      - PDF
+  - Text based
+      - HTML
+      - LaTeX
+      - Screenreader
+      - Braille
+      
+
+Screenreader (espeek)
+  - pitch [x-low | low | medium | high | x-high]
+  - volume [silent | x-soft | soft | medium | loud | x-loud]
+  
+  - break [none | x-weak | weak | medium | strong | x-strong] 
+  - rate [x-low | low | medium | high | x-high]
+  
+  - range [x-low | low | medium | high | x-high]
+  - voice [male | female]
+  - emphasis [strong | moderate | none | reduced] only for periods. do not use
+
+Text based
+  - font attributes
+      - bold
+      - italic
+      - color {mix}
+  - font style
+      - monospace | sans-serif | serif
+  
+Vector based
+  - Font
+      - size {mix, min, max}
+      - weight [thin .. fat] {mix, min, max}
+      - variant [oblique | italic | bold]
+  - Space
+      - margin {mix, min, max}
+      - vertical space {mix, min, max}
+  - Color
+      - brightness {mix, min, max}
+      - hue {mix}
+      - saturation {mix, min, max}
+
+Pixel based (includes all of Vector based)
+  - Resolution

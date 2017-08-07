@@ -1,4 +1,4 @@
-use layout::{Flex, FlexMeasure, Surface};
+use layout::{Flex, FlexMeasure, Surface, Style};
 use image::{GrayImage, Luma, Pixel};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -6,8 +6,13 @@ use std::cell::RefCell;
 use rusttype;
 use std::fmt::{Debug, self};
 use output::Output;
+use config::Config;
+use futures::future::{self, Future};
 use units::*;
-use io;
+use io::{self, open_read};
+use super::super::LoomError;
+use serde_json;
+use istring::IString;
 
 #[derive(Clone)]
 pub struct RustTypeFont {
@@ -132,11 +137,82 @@ impl RustTypeWord {
 pub struct UnscaledRustTypeFont {
     font:   rusttype::Font<'static>
 }
-
-pub struct PngOutput {}
+impl UnscaledRustTypeFont {
+    fn load(data: io::Data) -> UnscaledRustTypeFont {
+        UnscaledRustTypeFont {
+            font: rusttype::FontCollection::from_bytes(data.to_vec()).font_at(0).expect("failed to read font")
+        }
+    }
+}
+#[derive(Debug)]
+pub struct PngOutput {
+    styles: HashMap<IString, Style<PngOutput>>
+}
 impl PngOutput {
-    pub fn new() -> PngOutput {
-        PngOutput {}
+    pub fn load(config: Config) -> Box<Future<Item=PngOutput, Error=LoomError>>
+    {
+        box open_read(&config.style_dir, "png.style")
+        .and_then(move |data| {
+            let mut font_cache: HashMap<String, _> = HashMap::new();
+            
+            #[derive(Deserialize, Clone)]
+            struct RawStyle {
+                font_size:  Option<f32>,
+                leading:    Option<f32>,
+                par_indent: Option<f32>,
+                font_name:  Option<String>
+            }
+            
+            let raw_map: HashMap<String, RawStyle> = serde_json::from_slice(&data).unwrap();
+            for value in raw_map.values() {
+                if let Some(ref name) = value.font_name {
+                    font_cache.entry(name.clone()).or_insert_with(|| {
+                        open_read(&config.font_dir, name)
+                    });
+                }
+            }
+        
+            future::join_all(
+                font_cache.into_iter()
+                .map(|(name, future)| future.map(move |r| (name, r)))
+            )
+            .map(move |items| (raw_map, items))
+        })
+        .map(move |(raw_map, items)| {
+            // translate files into fonts
+            let fonts: HashMap<String, Rc<UnscaledRustTypeFont>> = items.into_iter()
+            .map(|(font_name, data)|
+                (font_name, Rc::new(UnscaledRustTypeFont::load(data)))
+            ).collect();
+            
+            let mut output = PngOutput {
+                styles: HashMap::with_capacity(raw_map.len())
+            };
+            let default_raw = raw_map.get("default").cloned().expect("no default style");
+            let default_font = &fonts[default_raw.font_name.as_ref().expect("no default font_name")];
+            let default_size = default_raw.font_size.expect("no default font_size");
+            
+            let default = Style::<PngOutput> {
+                font_size:  default_size,
+                leading:    default_raw.leading.unwrap_or(default_size * 1.5),
+                font:       output.scale(default_font, default_size),
+                par_indent: default_raw.par_indent.unwrap_or(0.)
+            };
+            
+            for (name, raw) in raw_map.into_iter() {
+                let size = raw.font_size.unwrap_or(default.font_size);
+                let font = raw.font_name.map(|name| &fonts[&name]).unwrap_or(default_font);
+                let style = Style {
+                    font_size:  size,
+                    leading:    raw.leading.unwrap_or(default.leading),
+                    font:       output.scale(font, size),
+                    par_indent: raw.par_indent.unwrap_or(default.par_indent)
+                };
+                output.styles.insert(name.into(), style);
+            }
+
+            output
+        })
     }
     
     pub fn surface(&self, size: Size) -> PngSurface {
@@ -175,13 +251,15 @@ impl Output for PngOutput {
     }
 
     fn use_font_data(&self, data: io::Data) -> UnscaledRustTypeFont {
-        UnscaledRustTypeFont {
-            font: rusttype::FontCollection::from_bytes(data.to_vec()).font_at(0).unwrap()
-        }
+        UnscaledRustTypeFont::load(data)
     }
     
     fn draw_word(surface: &mut PngSurface, pos: Point, word: &RustTypeWord) {
         word.draw_at(&mut surface.image, pos);
+    }
+
+    fn style(&self, name: &str) -> Option<&Style<PngOutput>> {
+        self.styles.get(name)
     }
 }
 

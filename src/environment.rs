@@ -8,7 +8,7 @@ use commands::Command;
 use ordermap::OrderMap;
 use layout::{Atom, Glue, Writer};
 use wheel::{Directory};
-use super::IString;
+use istring::IString;
 
 /// The Environment can only be changed within the Block::parse call
 /// Is is therefore allowed to cache results whithin methods that do not involve
@@ -144,7 +144,7 @@ impl GraphChain {
     }
     pub fn get_symbol(&self, name: &str) -> Option<&str> {
         match self.find(|env| env.symbols.get(name)) {
-            Some(ref s) => Some(&*s),
+            Some(ref s) => Some(s.as_str()),
             None => None
         }
     }
@@ -188,6 +188,16 @@ impl<'a> LayoutChain<'a> {
                 }
             }
             None => self.clone()
+        }
+    }
+    
+    pub fn with_fields<'b>(self, fields: Option<&'b Fields>) -> LayoutChain<'b>
+    where 'a: 'b
+    {
+        LayoutChain {
+            parent: self.parent,
+            local:  self.local,
+            fields: fields
         }
     }
 

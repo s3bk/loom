@@ -17,23 +17,15 @@ unicode-brackets = "*"
 roman = "*"
 rmp = "*"
 rmp-serialize = "*"
-#lz4 = "*"
-#broadcast = "*"
-#mio = "*"
-#derivative = "*"
 itertools = "*"
-#futures = "*"
-inlinable_string = "*"
+istring = { path = "../istring" }
 ordermap = "*"
 num = "*"
 futures = "*"
-owning_ref = "*"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
-jenga = "*"
 marksman_escape = "*"
-
 
 [dependencies.fst]
 version = "*"
@@ -73,6 +65,11 @@ path = "../wheel"
 [[bin]]
 name = "profile_parser"
 
+[[bin]]
+name = "render_html"
+
+[[bin]]
+name = "render_png"
 
 [profile.release]
 opt-level = 3

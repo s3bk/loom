@@ -6,7 +6,7 @@ use layout::{Atom, Writer};
 use environment::{LocalEnv, GraphChain, Fields, LayoutChain};
 use io::{Stamp, Io};
 use woot::WString;
-use super::IString;
+use istring::IString;
 pub use parser::Placeholder;
 
 /// The Document is a Directed Acyclic Graph.

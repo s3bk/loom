@@ -9,13 +9,14 @@ mod paragraph;
 mod generic_writer;
 mod flex;
 mod style;
+pub mod columns;
 
 pub use self::glue::Glue;
 pub use self::paragraph::ParagraphLayout;
 pub use self::generic_writer::{GenericWriter};
 pub use self::flex::FlexMeasure;
-pub use self::style::{Style, Stylist};
-
+pub use self::style::Style;
+pub use self::columns::ColumnLayout;
 
 // to flex or not to flex?
 #[allow(unused_variables)]
@@ -71,7 +72,18 @@ pub enum Entry<O: Output> {
     /// items to skip.
     BranchExit(usize),
     
-    Style(Rc<Style<O>>)
+    Style(Rc<Style<O>>),
+    
+    /// a reference to something.
+    /// location can be queried, once the main layout is complete
+    Anchor(Counter)
+}
+
+pub enum Counter {
+    None,       // not counted
+    Page,       // numbers are unique on each page; but different pages share the same numbers
+    Chapter,    // unique to each chapter
+    Document    // unique to the whole document
 }
 
 pub type StreamVec<O> = Vec<Entry<O>>;

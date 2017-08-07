@@ -2,8 +2,10 @@ use nom::{self, IResult, ErrorKind, digit, Slice, InputLength, InputIter};
 use std::iter::{Iterator};
 use unicode_categories::UnicodeCategories;
 use unicode_brackets::UnicodeBrackets;
+use istring::IString;
+
+#[cfg(debug_assertions)]
 use slug;
-use super::IString;
 
 macro_rules! alt_apply {
     ($i:expr, $arg:expr, $t:ident $(| $rest:tt)*) =>
@@ -145,6 +147,8 @@ fn is_punctuation(c: char) -> bool {
     match c {
         '.' | ',' | ':' | '!' | '?' | ';' => true,
         c if c <= '\u{7E}' => false,
+        c if c.is_punctuation_initial_quote() => false,
+        c if c.is_punctuation_final_quote() => false,
         _ => c.is_punctuation()
     }
 }
@@ -163,8 +167,13 @@ fn is_opening(c: char) -> bool {
     match c {
         '(' | '[' | '<' | '{' => true,
         c if c <= '\u{7E}' => false,
-        _ => c.is_open_bracket()
+        _ => c.is_open_bracket() || c.is_punctuation_initial_quote()
     }
+}
+#[test]
+fn test_is_opening() {
+    assert_eq!(is_opening('<'), true);
+    assert_eq!(is_opening('«'), true);
 }
 
 #[inline(always)]
@@ -172,33 +181,36 @@ fn is_closing(c: char) -> bool {
     match c {
         ')' | ']' | '>' | '}' => true,
         c if c <= '\u{7E}' => false,
-        _ => c.is_close_bracket()
+        _ => c.is_close_bracket() || c.is_punctuation_final_quote()
     }   
 }
+#[test]
+fn test_is_closing() {
+    assert_eq!(is_closing(']'), true);
+    assert_eq!(is_closing('»'), true);
+}
+
 
 #[inline(always)]
-fn letter_sequence(input: Data) -> IResult<Data, Data> {
+fn sequence<A, B>(input: Data, initial: A, rest: B) -> IResult<Data, Data>
+    where A: Fn(char) -> bool, B: Fn(char) -> bool
+{
     //use unicode_segmentation::UnicodeSegmentation;
     //let gi = UnicodeSegmentation::grapheme_indices(input, true);
     let mut codepoints = input.iter_elements();
-    let cp = match codepoints.next() {
-        Some(cp) => cp,
-        None => return IResult::Error(error_position!(ErrorKind::Alpha, input))
-    };
-    if is_letter(cp) == false {
-        return IResult::Error(error_position!(ErrorKind::Alpha, input));
+    match codepoints.next() {
+        Some(cp) if initial(cp) => {},
+        Some(_) => return IResult::Error(error_position!(ErrorKind::Alpha, input)),
+        _ => return IResult::Error(error_position!(ErrorKind::Eof, input))
     }
     loop {
         let remaining = codepoints.as_str();
         match codepoints.next() {
-            Some(cp) => {
-                if is_letter(cp) {
-                    continue;
-                } else {
-                    let p = input.input_len() - remaining.input_len();
-                    return IResult::Done(input.slice(p..), input.slice(..p));
-                }
-            }
+            Some(cp) if rest(cp) => continue,
+            Some(_) => {
+                let p = input.input_len() - remaining.input_len();
+                return IResult::Done(input.slice(p..), input.slice(..p));
+            },
             None => break
         }
     }
@@ -206,6 +218,9 @@ fn letter_sequence(input: Data) -> IResult<Data, Data> {
     IResult::Done(input.slice(input.input_len() ..), input)
 }
 
+fn letter_sequence(input: Data) -> IResult<Data, Data> {
+    sequence(input, |cp| is_letter(cp), |cp| is_letter(cp))
+}
 #[test]
 fn test_letter_sequence() {
     slug!(
@@ -217,8 +232,21 @@ fn test_letter_sequence() {
     );
 }
 
+fn word_sequence(input: Data) -> IResult<Data, Data> {
+    sequence(input, |cp| is_letter(cp), |cp| is_letter(cp) | is_punctuation(cp))
+}
+#[test]
+fn test_word_sequence() {
+    slug!(
+        word_sequence("hello!") => Done("", "hello!");
+        word_sequence("h") => Done("", "h");
+        word_sequence("hello» world") => Done("» world", "hello");
+        word_sequence("hello\nworld") => Done("\nworld", "hello");
+        word_sequence("") => Error;
+    );
+}
+
 fn string_esc<'a>(input: Data<'a>) -> IResult<Data<'a>, IString> {
-    use std::iter::FromIterator;
     map!(input, many1!(
         complete!(alt!(
             map!(take_until_either!("\\\""), { |d: Data<'a>| d.into() })
@@ -228,7 +256,7 @@ fn string_esc<'a>(input: Data<'a>) -> IResult<Data<'a>, IString> {
           | map!(tag!(r"\ "),     { |_| " "  })
           | map!(tag!(r##"\""##), { |_| "\"" })
         ))),
-        |v: Vec<&str>| IString::from_iter(v.iter().flat_map(|s| s.chars()))
+        |v: Vec<&str>| v.iter().flat_map(|s| s.chars()).collect()
     )
 }
 
@@ -251,40 +279,11 @@ fn test_string() {
     );
 }
 
-#[inline(always)]
-fn test_chars<'a, F: Fn(char) -> bool>(input: Data<'a>, test: F) -> IResult<Data<'a>, Data<'a>>
-{
-    let mut codepoints = input.iter_elements();
-    let cp = match codepoints.next() {
-        Some(cp) => cp,
-        None => return IResult::Error(error_position!(ErrorKind::Alpha, input))
-    };
-    if test(cp) == false {
-        return IResult::Error(error_position!(ErrorKind::Alpha, input));
-    }
-    
-    loop {
-        let p = input.input_len() - codepoints.as_str().len();
-        match codepoints.next() {
-            Some(cp) => {
-                if test(cp) {
-                    continue;
-                } else {
-                    return IResult::Done(input.slice(p..), input.slice(..p));
-                }
-            }
-            None => break
-        }
-    }
-    
-    IResult::Done(input.slice(input.input_len() ..), input)
-}
-
 named!(item_word <Item>,
-    map!(letter_sequence, |s: Data<'a>| { Item::Word(s.into()) })
+    map!(word_sequence, |s: Data<'a>| { Item::Word(s.into()) })
 );
 named!(item_symbol <Item>,
-    map!(apply!(test_chars, is_symbol ),
+    map!(apply!(sequence, is_symbol, is_symbol),
         |s: Data<'a>| { Item::Symbol(s.into()) }
     )
 );
@@ -294,7 +293,7 @@ named!(item_placeholder <Item>,
     )
 );
 named!(item_punctuation <Item>,
-    map!(apply!(test_chars, is_punctuation ),
+    map!(apply!(sequence, is_punctuation, is_punctuation),
         |s: Data<'a>| { Item::Punctuation(s.into()) }
     )
 );
@@ -305,11 +304,11 @@ named!(item_token <Item>,
 );
 named!(item_group <Item>,
     do_parse!(
-        opening:    apply!(test_chars, is_opening)
+        opening:    apply!(sequence, is_opening, is_opening)
     >>              opt!(space)
     >>  content:    separated_nonempty_list!(space, item)
     >>              opt!(space)
-    >>  closing:    apply!(test_chars, is_closing)
+    >>  closing:    apply!(sequence, is_closing, is_closing)
     >>             (Item::Group(Group{
                         opening:    opening.into(),
                         closing:    closing.into(),
@@ -318,6 +317,16 @@ named!(item_group <Item>,
     )
 );
 
+#[test]
+fn test_group() {
+    slug!(
+        item_group("« foo »\n") => Done("\n", Item::Group(Group {
+            opening: "«".into(),
+            content: vec![Item::Word("foo".into())],
+            closing: "»".into()
+        }));
+    );
+}
 fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item> {
     match input.iter_elements().next() {
         Some(c) => match c {
@@ -327,7 +336,7 @@ fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item> {
             '$' => item_placeholder(input),
             '\\' => item_token(input),
             '<' | '(' | '[' | '{' => item_group(input),
-            _ => alt!(input, item_word | item_symbol | item_punctuation | item_group)
+            _ => alt!(input, item_word | item_group | item_symbol | item_punctuation)
         },
         None => return IResult::Incomplete(nom::Needed::Size(1))
     }
@@ -340,7 +349,7 @@ fn test_item() {
             content: vec![Item::Word("foo".into())],
             closing: ">".into()
         }));
-        item("<foo> baz") => Done(" baz", Item::Group(Group {
+        item("< foo > baz") => Done(" baz", Item::Group(Group {
             opening: "<".into(),
             content: vec![Item::Word("foo".into())],
             closing: ">".into()
@@ -353,12 +362,12 @@ fn test_item() {
             ],
             closing: ">".into()
         }));
-        item("<baä>\n") => Done("\n", Item::Group(Group {
-            opening: "<".into(),
+        item("« baä »\n") => Done("\n", Item::Group(Group {
+            opening: "«".into(),
             content: vec![Item::Word("baä".into())],
-            closing: ">".into()
+            closing: "»".into()
         }));
-        item("foo baz") => Done(" baz", Item::Word("foo".into()));
+        item("f.oo baz") => Done(" baz", Item::Word("f.oo".into()));
         item("$body\n") => Done("\n", Item::Placeholder(Placeholder::Body));
         item("$3\n") => Done("\n", Item::Placeholder(Placeholder::Argument(3)));
         item("\\foo\n") => Done("\n", Item::Token("foo".into()));

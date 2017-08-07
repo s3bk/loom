@@ -1,0 +1,39 @@
+:chapter User Interface
+    
+    The architecture of loom does not only allow the creation of static images
+    that are printed on paper, but also dynamic images that are drawn on a 
+    computer screen .
+    
+    The interface between a computer program and a human can be on of them .
+    
+    User Interface as a graph
+    
+        
+    Surface
+      -> Browser Canvas
+      -> PNG
+
+    - Protocol based
+    - UI runs as separate process or thread
+This is an idea to create a program (or library if you prefer it) that provides reasonable™
+looking interface.
+For reference [this reddit thread](https://www.reddit.com/r/rust/comments/52cnw5/designingbrainstorming_an_idiomatic_flexible_rust/)
+
+Also the UI part would probably contain other languages.
+
+### motivation:
+
+* nonblocking UI with whatever programming model the developer prefers.
+* separate users for program and UI (safe to use privileged programs under X11 or Wayland) 
+
+### goals:
+
+* works with message passing (separate processes, different CPUs, network)
+* clean separation between program and UI (no shared mutable state)
+* accessibility
+* complete impl for the browser (can be used as server)
+
+### non-goals
+
+* custom widgets (if something useful is missing -> contribute)
+* direct control over style by the program

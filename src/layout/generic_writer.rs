@@ -1,13 +1,13 @@
 use layout::*;
 use output::Output;
 use std::iter::Extend;
-use layout::style::{Stylist};
+use layout::style::{Style};
 
 struct GenericBranchGen<'a, O: Output + 'a> {
     parent: &'a GenericWriter<'a, O>,
     branches: Vec<(StreamVec<O>, Glue)>
 }
-impl<'a, O: Output + 'static> BranchGenerator<'a> for GenericBranchGen<'a, O> {
+impl<'a, O: Output + 'a> BranchGenerator<'a> for GenericBranchGen<'a, O> {
     fn add(&mut self, f: &mut FnMut(&mut Writer)) {
         let mut w = self.parent.dup();
         f(&mut w);
@@ -17,8 +17,8 @@ impl<'a, O: Output + 'static> BranchGenerator<'a> for GenericBranchGen<'a, O> {
 pub struct GenericWriter<'a, O: Output + 'a> {
     state:      Glue,
     stream:     StreamVec<O>,
-    styler:     &'a Stylist<O>,
-    style:      &'a Style<O>
+    style:      &'a Style<O>,
+    output:     &'a O
 }
 
 // careful with the arguments.. they all have the same type!
@@ -51,13 +51,13 @@ fn merge<O: Output>(out: &mut StreamVec<O>, mut a: StreamVec<O>, mut b: StreamVe
         }
     }
 }
-impl<'a, O: Output + 'static> GenericWriter<'a, O> {
-    pub fn new(styler: &'a Stylist<O>) -> GenericWriter<'a, O> {
+impl<'a, O: Output + 'a> GenericWriter<'a, O> {
+    pub fn new(output: &'a O) -> GenericWriter<'a, O> {
         GenericWriter {
             state:  Glue::None,
             stream: Vec::new(),
-            style:  styler.default(),
-            styler: styler
+            style:  output.style("default").expect("no default style"),
+            output: output
         }
     }
     fn dup(&self) -> GenericWriter<O> {
@@ -100,8 +100,12 @@ impl<'a, O: Output + 'static> GenericWriter<'a, O> {
     #[inline(always)]
     fn write_glue(&mut self, left: Glue) {
         match self.state | left {
-            Glue::Newline { fill: f }
-             => self.stream.push(Entry::Linebreak(f)),
+            Glue::Newline { fill: f } => {
+                self.stream.push(Entry::Linebreak(f));
+                if self.style.par_indent != 0.0 {
+                    self.stream.push(Entry::Space(false, FlexMeasure::fixed(self.style.par_indent)));
+                }
+            },
             Glue::Space { breaking: b, scale: s }
              => self.stream.push(Entry::Space(b, O::measure_space(self.style.font(), s))),
             Glue::None => ()
@@ -118,7 +122,7 @@ impl<'a, O: Output + 'static> GenericWriter<'a, O> {
         self.state = right;
     }
 }   
-impl<'a, O: Output + 'static> Writer for GenericWriter<'a, O> {
+impl<'a, O: Output + 'a> Writer for GenericWriter<'a, O> {
     fn branch(&mut self, f: &mut FnMut(&mut BranchGenerator))
     {
         let mut branches = {
@@ -167,9 +171,13 @@ impl<'a, O: Output + 'static> Writer for GenericWriter<'a, O> {
         body: &mut FnMut(&mut Writer)
     ) {
         let old_style = self.style;
-        self.style = self.styler.get(name);
+        
+        self.style = self.output.style_or_default(name);
         head(self);
+        
+        self.style = self.output.style_or_default(&format!("{}.body", name));
         body(self);
+        
         self.style = old_style;
     }
 }

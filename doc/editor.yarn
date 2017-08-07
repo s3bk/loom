@@ -1,0 +1,17 @@
+Book
+  > Section
+      > Paragraph
+          > Sentence
+              > Word
+                [Space] -> next word
+	    [. ! ?] -> next sentence
+        [Return] -> next paragraph
+
+
+initial: [Word("Hello")] pending: None, cursor: 1
+input: 'W'
+result: [Word("Hello")] pending: "W", cursor: 1
+
+initial: [World("Hello")], pending: "World", cursor: 1
+input: Space
+result: [Word("Hello"), Word("World")], pending: None, cursor: 2

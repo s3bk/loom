@@ -1,0 +1,26 @@
+div#content {
+    border: 1px solid blue;
+    /* display: block; */
+    /* flex: 1 0 5em; */
+    overflow-y: scroll;
+    justify-content: space-between;
+}
+#nav {flex: 1 20em;}
+#container {
+    flex: 4 40em;
+    flex-direction: column;
+    align-content: stretch;
+    /* height: 30em; */
+    display: flex;
+    justify-content: space-between;
+}
+#view {
+    /* display: flex; */
+    flex: 1 fill;
+    /* align-self: stretch; */
+}
+body {
+    flex-flow: row;
+    display: flex;
+    /* align-content: stretch; */
+}

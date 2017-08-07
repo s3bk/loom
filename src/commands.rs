@@ -4,7 +4,8 @@ use document::NodeP;
 use std::boxed::FnBox;
 use futures::Future;
 use futures::future::{ok, join_all};
-use super::{IString, LoomError};
+use super::{LoomError};
+use istring::IString;
 
 pub fn register(env: &mut LocalEnv) {
  // env.add_command("fontsize",     cmd_fontsize);
@@ -15,6 +16,7 @@ pub fn register(env: &mut LocalEnv) {
     env.add_command("symbol",       cmd_symbol);
 }
 
+#[allow(unused_macros)]
 macro_rules! try_msg {
     ($msg:expr ; $arg:expr) => {
         match $expr {

@@ -1,0 +1,26 @@
+:item chapter
+    font: LinuxLibertine serif
+    font_size: sqrt(screen_width * screen_height) / 10
+    location: top
+    role: heading
+    relates: content
+    
+:item term
+    location: left
+    role: annotation
+    relates: content
+    
+:item brief
+    role: descriptive
+    relates: parent
+    font: italic
+
+:item waypoint
+    role: annotation
+    location: right
+    relates: following
+    
+:item note
+    role: comment
+    relates: parent
+    

@@ -1,9 +1,9 @@
-use layout::{FlexMeasure, Surface};
+use layout::{FlexMeasure, Surface, Style};
 use std::fmt::Debug;
 use units::*;
 use io;
 
-pub trait Output {
+pub trait Output: Sized {
     // 
     //type Measure: Clone + Debug + Sized + Zero;
     type Word: Clone + Debug + Sized;
@@ -20,6 +20,14 @@ pub trait Output {
     fn measure_space(&Self::Font, scale: Scale) -> FlexMeasure;
     
     fn draw_word(surface: &mut Self::Surface, pos: Point, word: &Self::Word);
+
+    fn style(&self, name: &str) -> Option<&Style<Self>>;
+    fn style_or_default(&self, name: &str) -> &Style<Self> {
+        match self.style(name) {
+            Some(s) => s,
+            None => self.style("default").expect("failed to get default style")
+        }
+    }
 }
 
 

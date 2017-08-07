@@ -1,6 +1,6 @@
 use nom::{Offset, AsBytes, Compare, CompareResult, InputLength, InputIter, Slice};
 use std::ops::{Range, RangeFrom, RangeTo, RangeFull};
-use inlinable_string::InlinableString;
+use istring::IString;
 
 #[macro_export]
 macro_rules! slug {
@@ -9,16 +9,22 @@ macro_rules! slug {
         use nom::Compare;
         match $r {
             nom::IResult::Done(rem, out) => {
+                let mut failed = false;
                 if rem.compare($rem) != nom::CompareResult::Ok {
                     let expected: &str = $rem.into();
                     let found: &str = rem.into();
                     println!("expected {:?}, found {:?}", expected, found);
-                    panic!();
+                    failed = true;
                 }
                 if !out.eq(&$out) {
                     println!("different output: {:?} != {:?}", out, $out);
+                    failed = true;
+                }
+                
+                if failed {
                     panic!();
                 }
+                
                 println!("ok");
             },
             nom::IResult::Error(e) => {
@@ -52,7 +58,7 @@ macro_rules! slug {
         $parser:ident ($case:expr $(, $arg:expr)* ) => $d:tt $( ( $e:expr, $f:expr ) )* ;
         )* ) => {
         $(
-            println!("{}({:?})", stringify!($parser), stringify!($case $(,$arg)*));
+            println!("{}({})", stringify!($parser), stringify!($case $(,$arg)*));
             
             let b = $crate::slug::wrap($case.into());
             let r = $parser(b.clone() $(,$arg)*);
@@ -126,8 +132,8 @@ impl<'a> Into<String> for Slug<'a> {
         self.slice.to_owned()
     }
 }
-impl<'a> Into<InlinableString> for Slug<'a> {
-    fn into(self) -> InlinableString {
+impl<'a> Into<IString> for Slug<'a> {
+    fn into(self) -> IString {
         self.slice.into()
     }
 }

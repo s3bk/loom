@@ -1,0 +1,37 @@
+:name       block invocation
+/key        parameter
+!cmd        command
+$var        macro variable
+
+
+/!macro intro    macro definition
+    !font-size smaller
+    !flow center
+    
+    $body
+    
+// intro is now defined
+:intro
+
+/:c
+
+:c This is used as a comment. It doesn't produce any output.
+
+# pattern
+/foo
+    $body
+
+!group "<" foo ">"
+
+<bar>
+
+layout for <bar> (Group)
+ -> layout for /foo (Definition)
+ 
+:foo
+    bar
+
+layout for :foo (Block)  
+    body = "bar"
+    layout for /foo
+        

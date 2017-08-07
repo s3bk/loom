@@ -3,10 +3,13 @@ use std::io::Write;
 use serde_json;
 use std::collections::HashMap;
 use marksman_escape::Escape;
-use jenga::place_iter;
+use wheel::Directory;
+use futures::Future;
+use io::{self};
+use super::super::LoomError;
 
 const HEAD: &'static str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<!DOCTYPE xhtml PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html>
     <head>
         <link rel="stylesheet" href="style.css" />
@@ -37,6 +40,12 @@ pub struct HtmlOutput {
     styles:     HashMap<String, HtmlStyle>
 }
 impl HtmlOutput {
+    pub fn load(root: &Directory) -> Box<Future<Item=HtmlOutput, Error=LoomError>> {
+        use std::str;
+        
+        box io::open_read(&root, "html.style")
+        .map(|data| HtmlOutput::new(str::from_utf8(&data).expect("invalid utf8")))
+    }
     pub fn new(styles: &str) -> HtmlOutput {
         HtmlOutput {
             styles: serde_json::from_str(styles).expect("failed to parse styles")
@@ -64,13 +73,22 @@ pub struct HtmlWriter<'a, W: Write + 'a> {
     output:     &'a HtmlOutput,
     writer:     &'a mut W,
 }
-fn glue_str(glue: Glue) -> &'static str {
+fn write_glue<W: Write>(w: &mut W, glue: Glue) {
     match glue {
-        Glue::None => "",
-        Glue::Space { breaking: true, .. } => " ",
-        Glue::Space { breaking: false, .. } => " ",
-        Glue::Newline { .. } => "<br />"
-    }
+        Glue::None => Ok(()),
+        Glue::Space { breaking: true, scale }  =>
+            if scale == 1.0 {
+                write!(w, "<sp></sp>")
+            } else {
+                write!(w, r#"<sp style="flex-stretch: {};"></sp>"#, scale)
+            },
+            Glue::Space { breaking: false, scale } => if scale == 1.0 {
+                write!(w, "<nbs></nbs>")
+            } else {
+                write!(w, r#"<nbs style="flex-stretch: {};"></nbs>"#, scale)
+            },
+        Glue::Newline { .. } => write!(w, "<nl></nl>")
+    }.unwrap()
 }
 
 impl<'a, W: Write + 'a> HtmlWriter<'a, W> {
@@ -88,17 +106,16 @@ impl<'a, W: Write + 'a> HtmlWriter<'a, W> {
     }
     
     fn add_glue(&mut self, glue: Glue) {
-        self.writer.write(glue_str(self.state | glue).as_bytes()).unwrap();
+        write_glue(&mut self.writer, self.state | glue);
     }
     
     fn add_text(&mut self, text: &str) {
-        use std::str;
-        place_iter(
-            Escape::new(text.bytes()), |escaped| {
-                println!("{} -> {:?}", text, str::from_utf8(escaped).unwrap());
-                self.writer.write(escaped).unwrap();
-            }
-        ).unwrap();
+        self.writer.write(b"<w>").unwrap();
+
+        for escaped in Escape::new(text.bytes()) {
+            self.writer.write(&[escaped]).unwrap();
+        }
+        self.writer.write(b"</w>").unwrap();
     }
 }
 
@@ -134,7 +151,7 @@ impl<'a, W: Write + 'a> Writer for HtmlWriter<'a, W> {
         .unwrap_or_else(|| self.output.styles.get("*").expect("* style missing"));
         
         // finish glue
-        self.writer.write(glue_str(self.state).as_bytes()).unwrap();
+        write_glue(&mut self.writer, self.state);
         self.state = Glue::None;
         
         write!(self.writer, r#"<{} name="{}">"#, tag(&style.tag), attr_val(name)).unwrap();

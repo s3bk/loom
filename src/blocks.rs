@@ -8,8 +8,9 @@ use io::Io;
 use layout::{Atom, Glue, Writer};
 use commands::{CommandComplete};
 use futures::future::{Future, join_all, ok};
-use super::{LoomError, IString};
+use super::{LoomError};
 use wheel::Log;
+use istring::IString;
 use slug;
 
 type NodeFuture = Box<Future<Item=NodeP, Error=LoomError>>;
@@ -53,7 +54,6 @@ impl Word {
 }
 impl Node for Word {
     fn layout(&self, env: LayoutChain, w: &mut Writer) {
-        println!("> {}", self.content);
         env.hyphenate(w, Atom {
             text:   &self.content,
             left:   Glue::space(),
@@ -124,12 +124,14 @@ impl fmt::Debug for Symbol {
 
 enum Token {
     HFill,
+    QuadSpace,
     Other(IString)
 }
 impl Token {
     fn new(s: IString) -> Token {
         match &*s {
             "hfill" => Token::HFill,
+            "quad" => Token::QuadSpace,
             _ => Token::Other(s)
         }
     }
@@ -139,6 +141,9 @@ impl Node for Token {
         match *self {
             Token::HFill => {
                 w.promote(Glue::hfill());
+            },
+            Token::QuadSpace => {
+                w.promote(Glue::Space { breaking: true, scale: 4.0 });
             },
             Token::Other(ref s) => {
                 w.word(Atom {
@@ -196,7 +201,7 @@ impl Node for Group {
     }
     fn layout(&self, env: LayoutChain, w: &mut Writer) {
         if let Some(target) = self.target.get() {
-            target.layout(env.link(self), w)
+            target.layout(env.with_fields(Some(&self.fields)), w)
         } else {
             let open_close = self.target.key();
             
@@ -408,8 +413,8 @@ impl Node for Definition {
     }
     fn layout(&self, env: LayoutChain, w: &mut Writer) {
         w.with(&self.name,
-            &mut |w| self.args.layout(env /* .link(self) */, w),
-            &mut |w| self.body.layout(env /* .link(self) */, w)
+            &mut |w| self.args.layout(env.clone() /* .link(self) */, w),
+            &mut |w| self.body.layout(env.clone() /* .link(self) */, w)
         )
     }
     fn add_ref(&self, source: &Rc<Node>) {
