@@ -79,8 +79,9 @@ pub enum Entry<O: Output> {
     Anchor(Counter)
 }
 
+#[derive(Debug)]
 pub enum Counter {
-    None,       // not counted
+    None,       // not counted, fails if it can't be positioned exactly
     Page,       // numbers are unique on each page; but different pages share the same numbers
     Chapter,    // unique to each chapter
     Document    // unique to the whole document

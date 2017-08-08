@@ -47,7 +47,7 @@ extern crate curl;
 #[macro_use]
 pub mod slug;
 
-pub mod blocks;
+pub mod nodes;
 pub mod environment;
 pub mod document;
 pub mod hyphenation;

@@ -106,7 +106,7 @@ fn cmd_hyphens(io: &Io, _env: &GraphChain, args: Vec<IString>)
 fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<IString>)
  -> CommandResult
 {
-    use blocks::Module;
+    use nodes::Module;
     use std::str;
     
     let modules = args.drain(..)

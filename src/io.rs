@@ -14,6 +14,7 @@ use futures::Future;
 use wheel::prelude::*;
 use config::Config;
 use super::LoomError;
+use nodes::Module;
 
 pub type TypeId = u16;
 pub type DataSize = u32;
@@ -45,7 +46,6 @@ impl Io {
     }
     
     pub fn yarn(&self, yarn: String) -> Box<Future<Item=Yarn, Error=LoomError>> {
-        use blocks::Module;
         let env = prepare_graph(self);
             
         let io = self.clone();
