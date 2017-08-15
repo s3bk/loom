@@ -26,6 +26,7 @@ serde = "*"
 serde_derive = "*"
 serde_json = "*"
 marksman_escape = "*"
+tuple = "*"
 
 [dependencies.fst]
 version = "*"

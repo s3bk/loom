@@ -168,4 +168,7 @@ impl<'a, W: Write + 'a> Writer for HtmlWriter<'a, W> {
         
         write!(self.writer, "</{}>", tag(&style.tag)).unwrap();
     }
+    fn anchor(&mut self, content: &mut FnMut(&mut Writer)) {
+        content(self)
+    }
 }

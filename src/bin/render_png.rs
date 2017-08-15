@@ -1,5 +1,6 @@
 extern crate loom;
 extern crate futures;
+extern crate tuple;
 #[macro_use] extern crate wheel;
 
 use std::env;
@@ -13,6 +14,7 @@ use loom::output::Output;
 use loom::output::png::*;
 use loom::LoomError;
 use wheel::prelude::*;
+use tuple::T2;
 use futures::Future;
 
 fn main() {
@@ -41,10 +43,13 @@ fn main() {
         let layout = ColumnLayout::new(w.finish(), 800., 800.);
         for (i, column) in layout.columns().enumerate() {
             println!("column {}: {:?}", i, column);
-            let mut surface = output.surface((900., 900.));
+            let mut surface = output.surface(T2(900., 900.));
             for (y, line) in column {
-                for (x, word) in line {
-                    PngOutput::draw_word(&mut surface, (x+50., y+50.), word);
+                for (x, item) in line {
+                    match item {
+                        Item::Word(w) => PngOutput::draw_word(&mut surface, T2(x+50., y+50.), w),
+                        _ => {}
+                    }
                 }
             }
             ::std::fs::File::create(&format!("{}_{:03}.png", name.to_str().unwrap(), i)).unwrap()

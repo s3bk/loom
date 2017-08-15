@@ -161,6 +161,14 @@ impl<'a, O: Output + 'a> Writer for GenericWriter<'a, O> {
     
     }
     
+    fn anchor(&mut self, content: &mut FnMut(&mut Writer)) {
+        let mut w = GenericWriter::new(self.output);
+        content(&mut w);
+        
+        // bypass glue
+        self.stream.push(Entry::Anchor(w.stream));
+    }
+    
     #[inline(always)]
     fn promote(&mut self, glue: Glue) {
         self.state |= glue;

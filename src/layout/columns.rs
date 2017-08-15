@@ -1,4 +1,4 @@
-use layout::{Entry, StreamVec, FlexMeasure};
+use layout::{Entry, StreamVec, FlexMeasure, Item};
 use output::{Output};
 use num::Zero;
 //use layout::style::{Style};
@@ -26,16 +26,25 @@ struct Break {
     column: Option<ColumnBreak>
 }
 
-pub struct ColumnLayout<'o, O: Output + 'o> {
-    items:      &'o StreamVec<O>,
-    nodes:      Vec<Option<Break>>,
+pub struct ParagraphLayout<'o, O: Output + 'o> {
+    items:      &'o [Entry<O>],
+    nodes:      Vec<Option<LineBreak>>,
     width:      Length,
-    height:     Length,
     last:       usize
+}
+pub struct ColumnLayout<'o, O: Output + 'o> {
+    para:       ParagraphLayout<'o, O>,
+    nodes_col:  Vec<Option<ColumnBreak>>,
+    height:     Length
 }
 impl<'o, O: Output + 'o> Debug for ColumnLayout<'o, O> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ColumnLayout")
+    }
+}
+impl<'o, O: Output + 'o> Debug for ParagraphLayout<'o, O> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ParagraphLayout")
     }
 }
 
@@ -77,27 +86,20 @@ impl Context {
     }
 }
 
-impl<'a, O: Output+Debug> ColumnLayout<'a, O>  {
-    pub fn new(items: &'a StreamVec<O>, width: Length, height: Length) -> ColumnLayout<'a, O> {
+impl<'o, O: Output+Debug> ParagraphLayout<'o, O> {
+    pub fn new(items: &'o [Entry<O>], width: Length) -> ParagraphLayout<'o, O> {
         let limit = items.len();
-        let mut nodes: Vec<Option<Break>> = vec![None; limit+1];
-        nodes[0] = Some(Break {
-            line: LineBreak::default(),
-            column: Some(ColumnBreak::default())
-        });
+        let mut nodes = vec![None; limit+1];
+        nodes[0] = Some(LineBreak::default());
 
-        let mut layout = ColumnLayout {
+        let mut layout = ParagraphLayout {
             nodes,
             items,
             width,
-            height,
             last: 0
         };
         layout.run();
         layout
-    }
-    pub fn columns<'l>(&'l self) -> Columns<'l, 'a, O> {
-        Columns::new(self)
     }
     fn run(&mut self) {
         let mut last = 0;
@@ -106,30 +108,25 @@ impl<'a, O: Output+Debug> ColumnLayout<'a, O>  {
                 Some(b) => {
                     last = self.complete_line(
                         start,
-                        Context::new(start, b.line.score)
+                        Context::new(start, b.score)
                     );
-                    self.compute_column(start, false);
                 },
                 None => {}
             }
         }
-        self.compute_column(last, true);
 
-        if self.nodes[last].unwrap().column.is_none() {
+        if self.nodes[last].is_none() {
             for i in 0 .. last {
                 println!("{:3} {:?}", i, self.items[i]);
                 if let Some(b) = self.nodes[i] {
-                    println!("     {:?}", b.line);
-                    if let Some(l) = b.column {
-                        println!("     {:?}", l);
-                    }
+                    println!("     {:?}", b);
                 }
             }
         }
 
         self.last = last;
     }
-    
+
     fn complete_line(&mut self, start: usize, mut c: Context) -> usize {
         let mut last = c.begin;
         
@@ -206,20 +203,72 @@ impl<'a, O: Output+Debug> ColumnLayout<'a, O>  {
                 height: c.measure.height
             };
             self.nodes[n] = Some(match self.nodes[n] {
-                Some(Break { line, column }) => Break {
-                    line:   if break_score > line.score { break_point } else { line },
-                    column: column
-                },
-                None => Break {
-                    line:   break_point,
-                    column: None
-                }
+                Some(line) if break_score <= line.score => line,
+                _ => break_point
             });
 
             true
         } else {
             false
         }
+    }
+    pub fn lines<'l>(&'l self) -> Column<'l, 'o, O> {
+        Column::new(0, self.last, self)
+    }
+}
+impl<'a, O: Output+Debug> ColumnLayout<'a, O>  {
+    pub fn new(items: &'a StreamVec<O>, width: Length, height: Length) -> ColumnLayout<'a, O> {
+        let limit = items.len();
+        let mut nodes = vec![None; limit+1];
+        let mut nodes_col = vec![None; limit+1];
+        nodes[0] = Some(LineBreak::default());
+        nodes_col[0] = Some(ColumnBreak::default());
+
+        let mut layout = ColumnLayout {
+            para: ParagraphLayout {
+                nodes,
+                items,
+                width,
+                last: 0
+            },
+            nodes_col,
+            height,
+        };
+        layout.run();
+        layout
+    }
+    pub fn columns<'l>(&'l self) -> Columns<'l, 'a, O> {
+        Columns::new(self)
+    }
+    fn run(&mut self) {
+        let mut last = 0;
+        for start in 0 .. self.para.items.len() {
+            match self.para.nodes[start] {
+                Some(b) => {
+                    last = self.para.complete_line(
+                        start,
+                        Context::new(start, b.score)
+                    );
+                    self.compute_column(start, false);
+                },
+                None => {}
+            }
+        }
+        self.compute_column(last, true);
+
+        if self.nodes_col[last].is_none() {
+            for i in 0 .. last {
+                println!("{:3} {:?}", i, self.para.items[i]);
+                if let Some(b) = self.para.nodes[i] {
+                    println!("     {:?}", b);
+                }
+                if let Some(l) = self.nodes_col[i] {
+                    println!("     {:?}", l);
+                }
+            }
+        }
+
+        self.para.last = last;
     }
 
     fn num_lines_penalty(&self, n: usize) -> f32 {
@@ -243,10 +292,10 @@ impl<'a, O: Output+Debug> ColumnLayout<'a, O>  {
         let mut found = false;
         
         loop {
-            let last_node = self.nodes[last].unwrap();
+            let last_node = self.para.nodes[last].unwrap();
                         
             if last > 0 {
-                match self.items[last-1] {
+                match self.para.items[last-1] {
                     Entry::Linebreak(_) => {
                         is_last_paragraph = false;
                         num_lines_before_end = 0;
@@ -261,14 +310,14 @@ impl<'a, O: Output+Debug> ColumnLayout<'a, O>  {
                     ref e => panic!("found: {:?}", e)
                 }
                 
-                height += last_node.line.height;
+                height += last_node.height;
 
                 if height > self.height {
                     break;
                 }
             }
 
-            if let Some(column) = last_node.column {
+            if let Some(column) = self.nodes_col[last] {
                 let mut score = column.score
                     + self.num_lines_penalty(num_lines_at_last_break)
                     + self.num_lines_penalty(num_lines_before_end);
@@ -277,19 +326,14 @@ impl<'a, O: Output+Debug> ColumnLayout<'a, O>  {
                     score += self.fill_penalty(height);
                 }
             
-                match self.nodes[n].unwrap() {
-                    Break { line, column } => {
-                        self.nodes[n] = Some(Break {
-                            line: line,
-                            column: Some(match column {
-                                Some(column) if column.score > score => column,
-                                _ => ColumnBreak {
-                                    prev: last,
-                                    score: score
-                                }
-                            })
+                match self.nodes_col[n] {
+                    Some(column) if column.score > score => {},
+                    _ => {
+                        self.nodes_col[n] = Some(ColumnBreak {
+                            prev: last,
+                            score: score
                         });
-
+                        
                         found = true;
                     }
                 }
@@ -298,7 +342,7 @@ impl<'a, O: Output+Debug> ColumnLayout<'a, O>  {
             if last == 0 {
                 break;
             }
-            last = last_node.line.prev;
+            last = last_node.prev;
         }
         
         found
@@ -313,10 +357,10 @@ pub struct Columns<'l, 'o: 'l, O: Output + 'o> {
 impl<'l, 'o: 'l, O: Output + 'o> Columns<'l, 'o, O> {
     fn new(layout: &'l ColumnLayout<'o, O>) -> Self {
         let mut columns = Vec::new();
-        let mut last = layout.last;
+        let mut last = layout.para.last;
         while last > 0 {
             columns.push(last);
-            last = layout.nodes[last].unwrap().column.unwrap().prev;
+            last = layout.nodes_col[last].unwrap().prev;
         }
         Columns {
             layout: layout,
@@ -328,24 +372,26 @@ impl<'l, 'o: 'l, O: Output + 'o> Iterator for Columns<'l, 'o, O> {
     type Item = Column<'l, 'o, O>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.columns.pop().map(|last| Column::new(last, self.layout))
+        self.columns.pop().map(|last| Column::new(
+            self.layout.nodes_col[last].unwrap().prev,
+            last,
+            &self.layout.para
+        ))
     }
 }
 
 #[derive(Debug)]
 pub struct Column<'l, 'o: 'l, O: Output + 'o> {
     lines:      Vec<usize>, // points to the end of each line
-    layout:     &'l ColumnLayout<'o, O>,
+    layout:     &'l ParagraphLayout<'o, O>,
     y:          Length
 }
 impl<'l, 'o: 'l, O: Output + 'o> Column<'l, 'o, O> {
-    fn new(mut last: usize, layout: &'l ColumnLayout<'o, O>) -> Self {
-        let first = layout.nodes[last].unwrap().column.unwrap().prev;
-        
+    fn new(first: usize, mut last: usize, layout: &'l ParagraphLayout<'o, O>) -> Self {
         let mut lines = Vec::new();
         while last > first {
             lines.push(last);
-            last = layout.nodes[last].unwrap().line.prev;
+            last = layout.nodes[last].unwrap().prev;
         }
         
         Column {
@@ -360,7 +406,7 @@ impl<'l, 'o: 'l, O: Output + 'o> Iterator for Column<'l, 'o, O> {
     
     fn next(&mut self) -> Option<Self::Item> {
         self.lines.pop().map(|last| {
-            let b = self.layout.nodes[last].unwrap().line;
+            let b = self.layout.nodes[last].unwrap();
             self.y += b.height;
             
             (self.y, Line {
@@ -377,7 +423,7 @@ impl<'l, 'o: 'l, O: Output + 'o> Iterator for Column<'l, 'o, O> {
 
 #[derive(Debug)]
 pub struct Line<'l, 'o: 'l, O: Output + 'o> {
-    layout:     &'l ColumnLayout<'o, O>,
+    layout:     &'l ParagraphLayout<'o, O>,
     pos:        usize,
     end:        usize,
     branches:   usize,
@@ -386,7 +432,7 @@ pub struct Line<'l, 'o: 'l, O: Output + 'o> {
 }
 
 impl<'l, 'o: 'l, O: Output + 'o> Iterator for Line<'l, 'o, O> {
-    type Item = (f32, &'o O::Word);
+    type Item = (f32, Item<'o, O>);
     fn next(&mut self) -> Option<Self::Item> {
         while self.pos < self.end {
             let pos = self.pos;
@@ -396,7 +442,7 @@ impl<'l, 'o: 'l, O: Output + 'o> Iterator for Line<'l, 'o, O> {
                 Entry::Word(ref w) | Entry::Punctuation(ref w) => {
                     let x = self.measure.at(self.line.factor);
                     self.measure += O::measure_word(w, self.layout.width);
-                    return Some((x, w));
+                    return Some((x, Item::Word(w)));
                 },
                 Entry::Space(_, s) => {
                     self.measure += s;
@@ -410,6 +456,10 @@ impl<'l, 'o: 'l, O: Output + 'o> Iterator for Line<'l, 'o, O> {
                 },
                 Entry::BranchExit(skip) => self.pos += skip,
                 Entry::Linebreak(_) => unreachable!(),
+                Entry::Anchor(ref data) => return Some((
+                    self.measure.at(self.line.factor),
+                    Item::Anchor(&*data)
+                )),
                 _ => {}
             }
         }

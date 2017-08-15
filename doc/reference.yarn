@@ -51,7 +51,7 @@
         It describes their relations , dependencies and meanings .
         It does not describe their representation .
         
-        This makes it possible to represent a file -- <Metafile> combination
+        This makes it possible to represent a file <Metafile> combination
 
     :term Metalayout
         
@@ -64,7 +64,7 @@
         
         You could , for example start with a <Metalayout> for a beamer presentation 
         and later add a <Metalayout> that produces a printable script . Another 
-        person could -- at the same time -- write a <Metalayout> to view the
+        person could at the same time write a <Metalayout> to view the
         content on a mobile device .
 
     :term Document Dictionary

@@ -6,6 +6,7 @@ extern crate nom;
 
 use loom::parser;
 use test::Bencher;
+use nom::IResult;
 
 #[cfg(not(debug_assertions))]
 #[inline(always)]
@@ -17,5 +18,8 @@ use nom::slug::wrap;
 #[bench]
 fn bench_block(b: &mut Bencher) {
     let reference = include_str!("../doc/reference.yarn");
-    b.iter(move || parser::block_body(wrap(reference), 0));
+    b.iter(move || match parser::block_body(wrap(reference), 0) {
+           IResult::Done("", block) => block,
+           e => panic!("{:?}", e)
+    });
 }

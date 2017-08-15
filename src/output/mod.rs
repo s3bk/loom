@@ -28,6 +28,7 @@ pub trait Output: Sized {
             None => self.style("default").expect("failed to get default style")
         }
     }
+    fn surface(&self, size: Size) -> Self::Surface;
 }
 
 

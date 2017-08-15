@@ -13,6 +13,7 @@ use io::{self, open_read};
 use super::super::LoomError;
 use serde_json;
 use istring::IString;
+use tuple::T2;
 
 #[derive(Clone)]
 pub struct RustTypeFont {
@@ -86,7 +87,7 @@ fn saturate(pixel: &mut Luma<u8>, increment: u8) {
 }
 
 impl RustTypeWordInner {
-    fn draw_at(&self, image: &mut GrayImage, pos: (f32, f32)) {
+    fn draw_at(&self, image: &mut GrayImage, pos: T2<f32, f32>) {
         use rusttype::point;
         
         let it = self.glyphs.iter()
@@ -129,7 +130,7 @@ impl Flex for RustTypeWord {
     }
 }
 impl RustTypeWord {
-    fn draw_at(&self, image: &mut GrayImage, pos: (f32, f32)) {
+    fn draw_at(&self, image: &mut GrayImage, pos: T2<f32, f32>) {
         self.inner.draw_at(image, pos);
     }
 }
@@ -214,16 +215,6 @@ impl PngOutput {
             output
         })
     }
-    
-    pub fn surface(&self, size: Size) -> PngSurface {
-        PngSurface {
-            image: GrayImage::from_pixel(
-                size.0 as u32,
-                size.1 as u32,
-                Luma { data: [255u8] }
-            )
-        }
-    }
 }
 
 impl Output for PngOutput {
@@ -260,6 +251,15 @@ impl Output for PngOutput {
 
     fn style(&self, name: &str) -> Option<&Style<PngOutput>> {
         self.styles.get(name)
+    }
+    fn surface(&self, size: Size) -> PngSurface {
+        PngSurface {
+            image: GrayImage::from_pixel(
+                size.0 as u32,
+                size.1 as u32,
+                Luma { data: [255u8] }
+            )
+        }
     }
 }
 

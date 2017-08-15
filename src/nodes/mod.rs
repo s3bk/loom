@@ -1,3 +1,4 @@
+mod aside;
 mod block;
 mod definition;
 mod group;
@@ -19,6 +20,7 @@ mod prelude {
     pub use nodes::*;
     pub use istring::IString;
 }
+pub use self::aside::*;
 pub use self::block::*;
 pub use self::definition::*;
 pub use self::group::*;
@@ -197,7 +199,7 @@ fn init_env(io: Io, env: GraphChain,
         join_all(definitions)
         .and_then(move |items: Vec<Definition>| {
             for d in items.into_iter() {
-                local_env.add_target(d.name().to_string(), Ptr::new(d).into());
+                local_env.add_target(d.name().into(), Ptr::new(d).into());
             }
             Ok(env.link(local_env))
         })

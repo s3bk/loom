@@ -5,18 +5,18 @@ use output::Output;
 
 // private mods
 mod glue;
-mod paragraph;
+//mod paragraph;
 mod generic_writer;
 mod flex;
 mod style;
 pub mod columns;
 
 pub use self::glue::Glue;
-pub use self::paragraph::ParagraphLayout;
+//pub use self::paragraph::ParagraphLayout;
 pub use self::generic_writer::{GenericWriter};
 pub use self::flex::FlexMeasure;
 pub use self::style::Style;
-pub use self::columns::ColumnLayout;
+pub use self::columns::*;
 
 // to flex or not to flex?
 #[allow(unused_variables)]
@@ -36,6 +36,7 @@ pub trait Flex {
 
 
 
+/// used as input to the line breaking algorithm
 #[derive(Debug)]
 pub enum Entry<O: Output> {
     /// A single word (sequence of glyphs)
@@ -76,15 +77,13 @@ pub enum Entry<O: Output> {
     
     /// a reference to something.
     /// location can be queried, once the main layout is complete
-    Anchor(Counter)
+    Anchor(StreamVec<O>)
 }
 
-#[derive(Debug)]
-pub enum Counter {
-    None,       // not counted, fails if it can't be positioned exactly
-    Page,       // numbers are unique on each page; but different pages share the same numbers
-    Chapter,    // unique to each chapter
-    Document    // unique to the whole document
+/// result of the linebreaking algorithm
+pub enum Item<'o, O: Output + 'o> {
+    Word(&'o O::Word),
+    Anchor(&'o [Entry<O>])
 }
 
 pub type StreamVec<O> = Vec<Entry<O>>;
@@ -146,6 +145,8 @@ pub trait Writer {
         head: &mut FnMut(&mut Writer),
         body: &mut FnMut(&mut Writer)
     );
+    
+    fn anchor(&mut self, content: &mut FnMut(&mut Writer)) {}
 }
 
 pub trait Surface {

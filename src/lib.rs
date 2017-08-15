@@ -29,6 +29,7 @@ extern crate futures;
 extern crate istring;
 extern crate ordermap;
 extern crate num;
+extern crate tuple;
 
 #[cfg(feature = "output_png")]
 extern crate image;
@@ -58,8 +59,10 @@ pub mod commands;
 pub mod output;
 pub mod units;
 pub mod config;
+pub mod book;
 
 use wheel::prelude::*;
+use istring::IString;
 
 #[derive(Debug)]
 pub enum LoomError {
@@ -69,7 +72,7 @@ pub enum LoomError {
     ConfigError(config::ParseError),
     MissingArg(&'static str),
     Hyphenator(fst::Error),
-    MissingItem(String),
+    MissingItem(IString),
     Parser
 }
 

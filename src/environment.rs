@@ -20,8 +20,8 @@ use istring::IString;
 /// used at graph creation and possibly layout
 pub struct LocalEnv {
     paths:          Vec<Directory>,
-    commands:       HashMap<String, Command>,
-    targets:        HashMap<String, NodeP>,
+    commands:       HashMap<IString, Command>,
+    targets:        HashMap<IString, NodeP>,
     groups:         OrderMap<(IString, IString), NodeP>,
     hyphenator:     Option<Hyphenator>,
     symbols:        OrderMap<IString, IString>
@@ -54,12 +54,12 @@ impl LocalEnv {
         }
     }
     pub fn add_command(&mut self, name: &str, cmd: Command) {
-        self.commands.insert(name.to_owned(), cmd);
+        self.commands.insert(name.into(), cmd);
     }
     pub fn add_path(&mut self, dir: Directory) {
         self.paths.push(dir);
     }
-    pub fn add_target(&mut self, name: String, target: NodeP) {
+    pub fn add_target(&mut self, name: IString, target: NodeP) {
         self.targets.insert(name, target);
     }
     pub fn add_group(&mut self, opening: IString, closing: IString, node: NodeP) {
@@ -73,7 +73,7 @@ impl LocalEnv {
     pub fn get_target(&self, name: &str) -> Option<&NodeP> {
         self.targets.get(name)
     }
-    pub fn targets<'a>(&'a self) -> impl Iterator<Item=(&'a String, &'a NodeP)> {
+    pub fn targets<'a>(&'a self) -> impl Iterator<Item=(&'a IString, &'a NodeP)> {
         self.targets.iter()
     }
     pub fn set_hyphenator(&mut self, hyphenator: Hyphenator) {

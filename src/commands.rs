@@ -1,9 +1,9 @@
 use environment::{LocalEnv, GraphChain};
 use io::{Io, open_read};
-use document::NodeP;
+use document::{NodeP, Ptr};
 use std::boxed::FnBox;
 use futures::Future;
-use futures::future::{ok, join_all};
+use futures::future::{ok, result, join_all};
 use super::{LoomError};
 use istring::IString;
 
@@ -14,6 +14,7 @@ pub fn register(env: &mut LocalEnv) {
     env.add_command("load",         cmd_load);
     env.add_command("use",          cmd_use);
     env.add_command("symbol",       cmd_symbol);
+    env.add_command("aside",        cmd_aside);
 }
 
 #[allow(unused_macros)]
@@ -30,8 +31,8 @@ macro_rules! try_msg {
 }
 
 macro_rules! cmd_args {
-    ($args:expr; $($out:ident ,)+) => {
-        let mut iter = $args.drain(..);
+    ($args:expr; $($out:ident),+) => {
+        let mut iter = $args.into_iter();
         $(
         let $out = match iter.next() {
             Some(v) => v,
@@ -63,13 +64,13 @@ fn cmd_fontsize(_io: &Io, _env: GraphChain, args: Vec<String>)
     box ok(complete(|_| ()))
 }
 */
-fn cmd_group(io: &Io, _env: &GraphChain, mut args: Vec<IString>)
+fn cmd_group(io: &Io, _env: &GraphChain, args: Vec<IString>)
  -> CommandResult
 {
     cmd_args!{args;
         opening,
         name,
-        closing,
+        closing
     };
     let io = io.clone();
     
@@ -103,13 +104,13 @@ fn cmd_hyphens(io: &Io, _env: &GraphChain, args: Vec<IString>)
     Ok(box f)
 }
 
-fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<IString>)
+fn cmd_load(io: &Io, env: &GraphChain, args: Vec<IString>)
  -> CommandResult
 {
     use nodes::Module;
     use std::str;
     
-    let modules = args.drain(..)
+    let modules = args.into_iter()
     .map(move |arg| {
         // FIXME
         let io = io.clone();
@@ -131,7 +132,7 @@ fn cmd_load(io: &Io, env: &GraphChain, mut args: Vec<IString>)
     .and_then(|mut modules: Vec<(NodeP, String)>| {
         Ok(complete(move |_env: &GraphChain, local: &mut LocalEnv| {
             for (module, name) in modules.drain(..) {
-                local.add_target(name, module);
+                local.add_target(name.into(), module);
             }
         }))
     });
@@ -193,7 +194,7 @@ fn cmd_use(io: &Io, _env: &GraphChain, args: Vec<IString>)
                         warn!(io.log, "use: '{}' has no environment", arg);
                     }
                 } else {
-                    local.add_target(name.to_string(), current.clone());
+                    local.add_target(name.into(), current.clone());
                 }
             }
         }
@@ -202,16 +203,31 @@ fn cmd_use(io: &Io, _env: &GraphChain, args: Vec<IString>)
 }
 
 
-fn cmd_symbol(_io: &Io, _env: &GraphChain, mut args: Vec<IString>)
+fn cmd_symbol(_io: &Io, _env: &GraphChain, args: Vec<IString>)
  -> CommandResult
 {
-
     cmd_args!{args;
         src,
-        dst,
+        dst
     };
     
-    Ok(box ok(complete(move |_env: &GraphChain, local: &mut LocalEnv|
+    Ok(box ok(complete(move |_env: &GraphChain, local: &mut LocalEnv| {
         local.add_symbol(&src, &dst)
-    )))
+    })))
+}
+
+fn cmd_aside(io: &Io, _: &GraphChain, args: Vec<IString>) -> CommandResult
+{
+    cmd_args!{args; name};
+
+    let io = io.clone();
+    use nodes::Aside;
+    Ok(box ok(complete(move |env: &GraphChain, local: &mut LocalEnv| {
+        let target = match local.get_target(&name).or_else(|| env.get_target(&name)) {
+            Some(target) => target.clone(),
+            None => return warn!(io.log, "aside: can't find target: {}", name)
+        };
+        let node = Ptr::new(Aside::new(target));
+        local.add_target(name, node.into());
+    })))
 }
