@@ -1,25 +1,5 @@
 "use strict";
 
-class LoomLine extends HTMLElement {
-    constructor(y) {
-        super();
-        this._y = y;
-    }
-
-    static get observedAttributes() { return ["y"]; }
-}
-customElements.define("loom-line", LoomLine);
-
-class LoomWord extends HTMLElement {
-    constructor() {
-        super();
-    }
-
-    static get observedAttributes() { return []; }
-}
-
-customElements.define("loom-word", LoomWord);
-
 let layout_items;
 
 function layout(items) {
@@ -135,6 +115,20 @@ function add_control(p, name, min, max, step, callback) {
         callback:   callback
     };
 }
+function Line(y) {
+    let line = document.createElement("div");
+    line.classList.add("line");
+    if (y !== undefined) {
+        line.setAttribute("y", y + "px");
+    }
+    return line;
+}
+function Word() {
+    let word = document.createElement("span");
+    word.classList.add("word");
+    return word;
+}
+
 function update_layout() {
     let items = layout_items;
     
@@ -144,7 +138,7 @@ function update_layout() {
     }
     let cache = display_state.cache;
     
-    let test_line = new LoomLine();
+    let test_line = Line();
     parent.appendChild(test_line);
     
     if (cache.space_width == undefined) {
@@ -160,7 +154,7 @@ function update_layout() {
                 {
                     let measure = cache[text];
                     if (measure == undefined) {
-                        let word = new LoomWord();
+                        let word = Word();
                         word.appendChild(document.createTextNode(text));
                         test_line.appendChild(word);
                         let rect = word.getBoundingClientRect();
@@ -439,7 +433,7 @@ function show_line() {
     do {
         var line = display_state.lines[display_state.line];
         
-        let lineElement = new LoomLine(display_state.y);
+        let lineElement = Line(display_state.y);
         
         let height = line[0];
         let words = line[1];
@@ -447,7 +441,7 @@ function show_line() {
             let text = word[0];
             let left = word[1];
             
-            let wordElement = new LoomWord();
+            let wordElement = Word();
             wordElement.style.width = left + "px";
             wordElement.appendChild(document.createTextNode(text));
             lineElement.appendChild(wordElement);

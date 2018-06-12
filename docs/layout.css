@@ -34,12 +34,12 @@ section#target {
     flex-direction: column;
 }
 
-section#target > loom-line {
+section#target > div.line {
     flex-direction: row;
     display: flex;
 }
 
-loom-word {
+span.word {
     text-align: right;
 }
 #measure {
