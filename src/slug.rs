@@ -1,4 +1,4 @@
-use nom::{Offset, AsBytes, Compare, CompareResult, InputLength, InputIter, Slice};
+use nom::{Offset, AsBytes, Compare, CompareResult, InputLength, InputIter, InputTake, Slice, AtEof, UnspecializedInput};
 use std::ops::{Range, RangeFrom, RangeTo, RangeFull};
 use istring::IString;
 
@@ -219,6 +219,19 @@ impl<'a> InputLength for Slug<'a> {
         self.slice.len()
     }
 }
+impl<'a> InputTake for Slug<'a> {
+    fn take(&self, count: usize) -> Self {
+        self.slice(..count)
+    }
+    fn take_split(&self, count: usize) -> (Self, Self) {
+        (self.slice(..count), self.slice(count..))
+    }
+}
+impl<'a> AtEof for Slug<'a> {
+    fn at_eof(&self) -> bool {
+        self.slice.at_eof()
+    }
+}
 impl<'a> InputIter for Slug<'a> {
     type Item     = char;
     type RawItem  = char;
@@ -252,6 +265,7 @@ impl<'a> InputIter for Slug<'a> {
       None
     }
 }
+impl<'a> UnspecializedInput for Slug<'a> {}
 pub fn wrap(data: &str) -> Slug {
     Slug {
         data:           data,

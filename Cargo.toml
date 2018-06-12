@@ -18,15 +18,17 @@ roman = "*"
 rmp = "*"
 rmp-serialize = "*"
 itertools = "*"
-istring = { path = "../istring" }
-ordermap = "*"
+istring = "*"
+indexmap = "*"
 num = "*"
-futures = "*"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
 marksman_escape = "*"
 tuple = "*"
+nom = "*"
+futures = "0.1"
+futures-await = "0.1"
 
 [dependencies.fst]
 version = "*"
@@ -45,12 +47,6 @@ default-features = false
 features = ["png_codec"]
 version = "*"
 optional = true
-
-[dependencies.nom]
-git = "https://github.com/s3bk/nom.git"
-default_features = false
-features = []
-#version = "0.4"
 
 [dependencies.woot]
 git = "https://github.com/s3bk/woot.git"

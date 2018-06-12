@@ -1,10 +1,10 @@
 #![feature(trace_macros)]
-#![feature(conservative_impl_trait)]
 #![feature(box_syntax)]
-#![feature(custom_attribute)]
 #![feature(unboxed_closures)]
 #![feature(fnbox)]
 #![feature(link_args)]
+#![feature(proc_macro)]
+#![feature(generators)]
 
 #[macro_use] extern crate nom;
 #[macro_use] extern crate wheel;
@@ -21,13 +21,10 @@ extern crate roman;
 extern crate fst;
 extern crate rmp;
 extern crate rmp_serialize;
-//extern crate lz4;
 extern crate woot;
-//extern crate mio;
-extern crate futures;
-//extern crate curl;
+extern crate futures_await as futures;
 extern crate istring;
-extern crate ordermap;
+extern crate indexmap;
 extern crate num;
 extern crate tuple;
 
@@ -60,6 +57,7 @@ pub mod output;
 pub mod units;
 pub mod config;
 pub mod book;
+pub mod source;
 
 use wheel::prelude::*;
 use istring::IString;
@@ -83,4 +81,5 @@ pub mod prelude {
     pub use config::*;
     pub use LoomError;
     pub use layout::*;
+    pub use futures::prelude::*;
 }

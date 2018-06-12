@@ -6,7 +6,7 @@ pub struct Group {
 }
 
 impl Group {
-    pub fn from(io: &Io, env: &GraphChain, g: parser::Group) -> Ptr<Group> {
+    pub fn from(io: &Io, env: &GraphChain, g: source::Group) -> Ptr<Group> {
         let content = Ptr::new(NodeList::from(io,
             g.content.into_iter().map(|n| item_node(io, env, n))
         ));

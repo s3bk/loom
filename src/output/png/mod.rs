@@ -92,7 +92,7 @@ impl RustTypeWordInner {
         
         let it = self.glyphs.iter()
         .map(|&(id, dx)| (
-            self.font.glyph(id).unwrap()
+            self.font.glyph(id)
             .scaled(self.scale)
             .positioned(point(pos.0+dx, pos.1))
         ));
@@ -108,7 +108,7 @@ impl RustTypeWordInner {
                                 px as u32,
                                 py as u32
                             ),
-                            ((v * 255.) as u8)
+                            (v * 255.) as u8
                         );
                     }
                 });
@@ -141,7 +141,7 @@ pub struct UnscaledRustTypeFont {
 impl UnscaledRustTypeFont {
     fn load(data: io::Data) -> UnscaledRustTypeFont {
         UnscaledRustTypeFont {
-            font: rusttype::FontCollection::from_bytes(data.to_vec()).font_at(0).expect("failed to read font")
+            font: rusttype::FontCollection::from_bytes(data.to_vec()).unwrap().font_at(0).expect("failed to read font")
         }
     }
 }

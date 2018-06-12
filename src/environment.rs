@@ -5,7 +5,7 @@ use document::{Node, NodeP, NodeListP};
 use io::{Io};
 use hyphenation::Hyphenator;
 use commands::Command;
-use ordermap::OrderMap;
+use indexmap::IndexMap;
 use layout::{Atom, Glue, Writer};
 use wheel::{Directory};
 use istring::IString;
@@ -22,9 +22,9 @@ pub struct LocalEnv {
     paths:          Vec<Directory>,
     commands:       HashMap<IString, Command>,
     targets:        HashMap<IString, NodeP>,
-    groups:         OrderMap<(IString, IString), NodeP>,
+    groups:         IndexMap<(IString, IString), NodeP>,
     hyphenator:     Option<Hyphenator>,
-    symbols:        OrderMap<IString, IString>
+    symbols:        IndexMap<IString, IString>
 }
 
 pub struct Fields {
@@ -48,9 +48,9 @@ impl LocalEnv {
             paths:      vec![],
             commands:   HashMap::new(),
             targets:    HashMap::new(),
-            groups:     OrderMap::new(),
+            groups:     IndexMap::new(),
             hyphenator: None,
-            symbols:    OrderMap::new()
+            symbols:    IndexMap::new()
         }
     }
     pub fn add_command(&mut self, name: &str, cmd: Command) {

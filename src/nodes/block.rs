@@ -10,7 +10,7 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn from_block(io: &Io, env: &GraphChain, block: parser::Block)
+    pub fn from_block(io: &Io, env: &GraphChain, block: source::Block)
      -> Box<Future<Item=NodeP, Error=LoomError>>
     {
         let io2 = io.clone();

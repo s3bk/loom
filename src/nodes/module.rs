@@ -1,3 +1,4 @@
+use prelude::*;
 use nodes::prelude::*;
 
 pub struct Module {
@@ -5,43 +6,16 @@ pub struct Module {
     body:       NodeListP
 }
 impl Module {
-    pub fn parse(io: Io, env: GraphChain, input: String)
-     -> Box< Future<Item=NodeP, Error=LoomError> >
+    #[async]
+    pub fn parse(io: Io, env: GraphChain, input: String) -> Result<NodeP, LoomError>
     {
-        use nom::IResult;
-        use futures::future::err;
-        
-        #[cfg(debug_assertions)]
-        let input = slug::wrap(&input);
-        
-        #[cfg(not(debug_assertions))]
-        let input = &input;
-        
-        let body = match parser::block_body(input, 0) {
-            IResult::Done(rem, out) => {
-                if rem.len() > 0 {
-                    let s: &str = rem.into();
-                    warn!(io.log, "remaining:\n{}", s);
-                }
-                debug!(io.log, "{:?}", out);
-                out
-            },
-            _ => {
-                return box err(LoomError::Parser);
-            }
-        };
-        
-        let childs = body.childs;
-        box init_env(io.clone(), env, body.commands, body.parameters)
-        .and_then(move |env| {
-            process_body(io, env, childs)
-            .map(|(env, childs)| -> NodeP {
-                Ptr::new(Module {
-                    env:    env.take(),
-                    body:   childs
-                }).into()
-            })
-        })
+        let body = source::parse(&io, &input)?;
+        let env = await!(init_env(io.clone(), env, body.commands, body.parameters))?;
+        let (env, childs) = await!(process_body(io, env, body.childs))?;
+        Ok(Ptr::new(Module {
+            env:    env.take(),
+            body:   childs
+        }).into())
     }
 }
 impl Node for Module {

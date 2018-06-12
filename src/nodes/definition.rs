@@ -33,7 +33,7 @@ impl Node for Definition {
 }
 
 impl Definition {
-    pub fn from_param(io: Io, env: GraphChain, p: parser::Parameter)
+    pub fn from_param(io: Io, env: GraphChain, p: source::Parameter)
      -> Box<Future<Item=Definition, Error=LoomError>>
     {
         let args = p.args;

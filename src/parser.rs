@@ -1,10 +1,12 @@
-use nom::{self, IResult, ErrorKind, digit, Slice, InputLength, InputIter};
+use nom::{self, IResult, ErrorKind, digit, Slice, InputLength, InputIter, Err};
 use std::iter::{Iterator};
 use unicode_categories::UnicodeCategories;
 use unicode_brackets::UnicodeBrackets;
 use istring::IString;
+pub use source::*;
 
-#[cfg(debug_assertions)]
+
+#[cfg(feature="slug")]
 use slug;
 
 macro_rules! alt_apply {
@@ -12,15 +14,10 @@ macro_rules! alt_apply {
     ( alt!($i, apply!($t, $arg) $(| apply!($rest, $arg) )* ) )
 }
 
-#[cfg(not(debug_assertions))]
-macro_rules! slug {
-    ($($t:tt)*) => ()
-}
-
-#[cfg(debug_assertions)]
+#[cfg(feature="slug")]
 type Data<'a> = slug::Slug<'a>;
         
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature="slug"))]
 type Data<'a> = &'a str;
 
 #[macro_export]
@@ -37,25 +34,17 @@ macro_rules! named (
   );
 );
 
-#[inline(always)]
-fn space(input: Data) -> IResult<Data, Data> {
-    let mut n = 0;
-    for (m, c) in input.iter_elements().enumerate() {
-        match c {
-            ' ' | '\t' => continue,
-            _ => {
-                n = m;
-                break;
-            }
-        }
-    }
-    if n > 0 {
-        IResult::Done(input.slice(n ..), input.slice(.. n))
-    } else {
-        IResult::Error(error_position!(ErrorKind::Space, input))
-    }
+use nom::space;
+
+macro_rules! incomplete {
+    ($needed:expr) => (Err(Err::Incomplete($needed)))
 }
-//use nom::space;
+macro_rules! err {
+    ($kind:expr, $input:expr) => (Err(Err::Error(error_position!($input, $kind))))
+}
+macro_rules! done {
+    ($input:expr, $val:expr) => (Ok(($input, $val)))
+}
 
 #[test]
 fn test_space() {
@@ -72,11 +61,11 @@ fn endline(input: Data) -> IResult<Data, ()> {
     for (m, c) in input.iter_elements().enumerate() {
         match c {
             ' ' | '\t' => continue,
-            '\n' => return IResult::Done(input.slice(m + 1 ..), ()),
+            '\n' => return done!(input.slice(m + 1 ..), ()),
             _ => break
         }
     }
-    IResult::Error(error_position!(ErrorKind::Tag, input))
+    err!(ErrorKind::Tag, input)
 }
 #[test]
 fn test_endline() {
@@ -97,14 +86,6 @@ named!(indent_any,
     )
 );
 
-#[derive(Debug, PartialEq)]
-pub enum Placeholder {
-    Body,
-    Argument(usize),
-    Arguments,
-    Unknown(IString)
-}
-
 named!(placeholder <Placeholder>,
     alt!(
         map!(tag!("body"), {|_| Placeholder::Body })
@@ -114,23 +95,6 @@ named!(placeholder <Placeholder>,
         })
     )
 );
-
-#[derive(Debug, PartialEq)]
-pub struct Group {
-    pub opening: IString,
-    pub closing: IString,
-    pub content: Vec<Item>
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Item {
-    Word(IString),
-    Symbol(IString),
-    Punctuation(IString),
-    Placeholder(Placeholder),
-    Token(IString),
-    Group(Group)
-}
 
 #[inline(always)]
 fn is_letter(c: char) -> bool {
@@ -200,8 +164,8 @@ fn sequence<A, B>(input: Data, initial: A, rest: B) -> IResult<Data, Data>
     let mut codepoints = input.iter_elements();
     match codepoints.next() {
         Some(cp) if initial(cp) => {},
-        Some(_) => return IResult::Error(error_position!(ErrorKind::Alpha, input)),
-        _ => return IResult::Error(error_position!(ErrorKind::Eof, input))
+        Some(_) => return err!(ErrorKind::Alpha, input),
+        _ => return err!(ErrorKind::Eof, input)
     }
     loop {
         let remaining = codepoints.as_str();
@@ -209,13 +173,13 @@ fn sequence<A, B>(input: Data, initial: A, rest: B) -> IResult<Data, Data>
             Some(cp) if rest(cp) => continue,
             Some(_) => {
                 let p = input.input_len() - remaining.input_len();
-                return IResult::Done(input.slice(p..), input.slice(..p));
+                return done!(input.slice(p..), input.slice(..p));
             },
             None => break
         }
     }
     
-    IResult::Done(input.slice(input.input_len() ..), input)
+    done!(input.slice(input.input_len() ..), input)
 }
 
 fn letter_sequence(input: Data) -> IResult<Data, Data> {
@@ -338,7 +302,7 @@ fn item<'a>(input: Data<'a>) -> IResult<Data<'a>, Item> {
             '<' | '(' | '[' | '{' => item_group(input),
             _ => alt!(input, item_word | item_group | item_symbol | item_punctuation)
         },
-        None => return IResult::Incomplete(nom::Needed::Size(1))
+        None => return incomplete!(nom::Needed::Size(1))
     }
 }
 #[test]
@@ -460,41 +424,6 @@ fn test_list_item() {
             Item::Word("world".into())
         ]);
     );
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Parameter {
-    pub name: IString,
-    pub args: Vec<Item>,
-    pub value: BlockBody
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Command {
-    pub name: IString,
-    pub args: Vec<IString>
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Block {
-    pub name:       IString,
-    pub argument:   Vec<Item>,
-    pub body:       BlockBody
-}
-
-#[derive(Debug, PartialEq)]
-pub struct BlockBody {
-    pub commands:   Vec<Command>,
-    pub parameters: Vec<Parameter>,
-    pub childs:     Vec<Body>
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Body {
-    Leaf(Vec<Item>),
-    List(Vec<Vec<Item>>),
-    Block(Block),
-    Placeholder(Placeholder)
 }
 
 #[inline(always)]

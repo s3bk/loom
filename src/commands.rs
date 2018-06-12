@@ -3,7 +3,7 @@ use io::{Io, open_read};
 use document::{NodeP, Ptr};
 use std::boxed::FnBox;
 use futures::Future;
-use futures::future::{ok, result, join_all};
+use futures::future::{ok, join_all};
 use super::{LoomError};
 use istring::IString;
 
@@ -108,7 +108,6 @@ fn cmd_load(io: &Io, env: &GraphChain, args: Vec<IString>)
  -> CommandResult
 {
     use nodes::Module;
-    use std::str;
     
     let modules = args.into_iter()
     .map(move |arg| {

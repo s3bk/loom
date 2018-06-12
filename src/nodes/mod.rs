@@ -14,7 +14,7 @@ mod prelude {
     pub use environment::*;
     pub use layout::*;
     pub use io::Io;
-    pub use parser;
+    pub use source;
     pub use LoomError;
     pub use futures::future::{Future, join_all, ok};
     pub use nodes::*;
@@ -33,7 +33,6 @@ use self::prelude::*;
 use std::fmt;
 use commands::{CommandComplete};
 use wheel::Log;
-use slug;
 
 type NodeFuture = Box<Future<Item=NodeP, Error=LoomError>>;
 
@@ -41,10 +40,10 @@ fn wrap<N: Node + 'static>(node: N) -> NodeFuture {
     box ok(Ptr::new(node).into())
 }
 
-fn process_body(io: Io, env: GraphChain, childs: Vec<parser::Body>)
+fn process_body(io: Io, env: GraphChain, childs: Vec<source::Body>)
  -> Box< Future<Item=(GraphChain, NodeListP), Error=LoomError> >
 {
-    use parser::Body;
+    use source::Body;
     
     let io2 = io.clone();
     let nodes = childs.into_iter()
@@ -144,8 +143,8 @@ impl fmt::Debug for Symbol {
     }
 }
 
-fn item_node(io: &Io, env: &GraphChain, i: parser::Item) -> NodeP {
-    use parser::Item;
+fn item_node(io: &Io, env: &GraphChain, i: source::Item) -> NodeP {
+    use source::Item;
     
     match i {
         Item::Word(ref s) => Ptr::new(Word::new(s)).into(),
@@ -158,7 +157,7 @@ fn item_node(io: &Io, env: &GraphChain, i: parser::Item) -> NodeP {
 }
 
 fn init_env(io: Io, env: GraphChain,
-    commands: Vec<parser::Command>, parameters: Vec<parser::Parameter>)
+    commands: Vec<source::Command>, parameters: Vec<source::Parameter>)
  -> Box<Future<Item=GraphChain, Error=LoomError>>
 {
     let log = io.log;
